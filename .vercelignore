@@ -1,0 +1,11 @@
+# No subir a Vercel:
+node_modules
+.next
+.git
+
+# ¡Nunca subir las claves! (se cargan como variables de entorno en Vercel)
+.env
+.env.local
+.env*.local
+
+.vercel

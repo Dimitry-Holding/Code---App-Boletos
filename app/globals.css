@@ -1,0 +1,294 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card-2: #334155;
+  --text: #f1f5f9;
+  --muted: #94a3b8;
+  --accent: #38bdf8;
+  --accent-strong: #0ea5e9;
+  --ok: #22c55e;
+  --warn: #f59e0b;
+  --err: #ef4444;
+  --border: #334155;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 16px 16px 96px;
+}
+
+header h1 {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+header p {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  margin-top: 16px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  border-radius: 12px;
+  padding: 14px 18px;
+  font-weight: 600;
+  transition: filter 0.15s ease;
+}
+
+button:active {
+  filter: brightness(0.9);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent-strong);
+  color: white;
+  width: 100%;
+  font-size: 16px;
+}
+
+.btn-secondary {
+  background: var(--card-2);
+  color: var(--text);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted);
+  padding: 8px 10px;
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--err);
+  border: 1px solid var(--err);
+}
+
+.capture-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--card-2);
+  border: 2px dashed var(--accent);
+  border-radius: 14px;
+  padding: 32px 16px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.capture-label .icon {
+  font-size: 40px;
+}
+
+.capture-label .hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.preview {
+  width: 100%;
+  border-radius: 12px;
+  max-height: 320px;
+  object-fit: contain;
+  background: #000;
+}
+
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.row.wrap {
+  flex-wrap: wrap;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.field {
+  margin-top: 12px;
+}
+
+.field label {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+
+.field input,
+.field select,
+.field textarea {
+  width: 100%;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+  font: inherit;
+}
+
+.field textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.status {
+  text-align: center;
+  padding: 24px;
+  color: var(--muted);
+}
+
+.spinner {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  border: 3px solid var(--card-2);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-bottom: 8px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.error-box {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid var(--err);
+  color: #fecaca;
+  padding: 12px;
+  border-radius: 10px;
+  margin-top: 12px;
+  font-size: 14px;
+}
+
+.badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.badge.alta {
+  background: rgba(34, 197, 94, 0.2);
+  color: #86efac;
+}
+.badge.media {
+  background: rgba(245, 158, 11, 0.2);
+  color: #fcd34d;
+}
+.badge.baixa {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.registro {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
+
+.registro:first-child {
+  border-top: none;
+}
+
+.registro .top {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.registro .fornecedor {
+  font-weight: 700;
+}
+
+.registro .valor {
+  font-weight: 700;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.registro .meta {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.registro .archivo {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  color: var(--accent);
+  margin-top: 6px;
+  word-break: break-all;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 24px;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.count {
+  background: var(--card-2);
+  color: var(--muted);
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.note {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 8px;
+  line-height: 1.5;
+}

@@ -1,0 +1,17 @@
+# dependencias
+/node_modules
+
+# build de Next.js
+/.next
+/out
+
+# entorno (¡nunca subir la API key!)
+.env
+.env.local
+.env*.local
+
+# logs y sistema
+npm-debug.log*
+*.log
+.DS_Store
+Thumbs.db
