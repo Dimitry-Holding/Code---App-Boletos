@@ -12,12 +12,16 @@ import {
 } from "@/lib/evento";
 import TopBar from "./TopBar";
 
-const MESES = [
-  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
-  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
-];
-
 type Perfil = { id: string; nome: string };
+
+function isoHoje() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function isoPrimeiroDiaMes() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
 
 export default function AdminApp({ nome }: { nome: string }) {
   const supabase = useMemo(() => createClient(), []);
@@ -25,10 +29,10 @@ export default function AdminApp({ nome }: { nome: string }) {
   const [perfiles, setPerfiles] = useState<Record<string, string>>({});
   const [cargando, setCargando] = useState(true);
 
-  const hoy = new Date();
-  const [ano, setAno] = useState(hoy.getFullYear());
-  const [mes, setMes] = useState(hoy.getMonth() + 1);
-  const [condutor, setCondutor] = useState("todos");
+  const [inicio, setInicio] = useState(isoPrimeiroDiaMes());
+  const [fim, setFim] = useState(isoHoje());
+  const [usuario, setUsuario] = useState("todos");
+  const [tdc, setTdc] = useState("todos");
 
   useEffect(() => {
     (async () => {
@@ -44,15 +48,25 @@ export default function AdminApp({ nome }: { nome: string }) {
     })();
   }, [supabase]);
 
-  const conductoresEnDatos = useMemo(() => {
+  const usuariosEnDatos = useMemo(() => {
     const ids = Array.from(new Set(eventos.map((e) => e.conductor_id)));
     return ids.map((id) => ({ id, nome: perfiles[id] ?? id.slice(0, 8) }));
   }, [eventos, perfiles]);
 
+  const tarjetas = useMemo(
+    () =>
+      Array.from(
+        new Set(eventos.map((e) => e.ultimos4).filter((x): x is string => !!x)),
+      ).sort(),
+    [eventos],
+  );
+
   const filtrados = eventos.filter((e) => {
-    const d = new Date(e.data_documento || e.criado_em);
-    if (d.getFullYear() !== ano || d.getMonth() + 1 !== mes) return false;
-    if (condutor !== "todos" && e.conductor_id !== condutor) return false;
+    const dia = (e.data_documento || e.criado_em || "").slice(0, 10);
+    if (inicio && dia < inicio) return false;
+    if (fim && dia > fim) return false;
+    if (usuario !== "todos" && e.conductor_id !== usuario) return false;
+    if (tdc !== "todos" && (e.ultimos4 || "") !== tdc) return false;
     return true;
   });
 
@@ -71,7 +85,7 @@ export default function AdminApp({ nome }: { nome: string }) {
     });
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Notas");
-    XLSX.writeFile(wb, `notas_${ano}-${String(mes).padStart(2, "0")}.xlsx`);
+    XLSX.writeFile(wb, `notas_${inicio}_a_${fim}.xlsx`);
   }
 
   async function verFoto(path: string) {
@@ -94,7 +108,7 @@ export default function AdminApp({ nome }: { nome: string }) {
           <span className="count">{filtrados.length}</span>
           <span className="spacer" />
           <Link href="/usuarios" className="btn btn-light">
-            👥 Condutores
+            👥 Usuários
           </Link>
           <button
             className="btn btn-primary"
@@ -108,35 +122,39 @@ export default function AdminApp({ nome }: { nome: string }) {
         <div className="card">
           <div className="filters">
             <div className="field">
-              <label>Mês</label>
-              <select value={mes} onChange={(e) => setMes(Number(e.target.value))}>
-                {MESES.map((m, i) => (
-                  <option key={m} value={i + 1}>
-                    {m}
-                  </option>
-                ))}
-              </select>
+              <label>De</label>
+              <input
+                type="date"
+                value={inicio}
+                onChange={(e) => setInicio(e.target.value)}
+              />
             </div>
             <div className="field">
-              <label>Ano</label>
-              <select value={ano} onChange={(e) => setAno(Number(e.target.value))}>
-                {[ano + 1, ano, ano - 1, ano - 2].map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
+              <label>Até</label>
+              <input
+                type="date"
+                value={fim}
+                onChange={(e) => setFim(e.target.value)}
+              />
             </div>
             <div className="field">
-              <label>Condutor</label>
-              <select
-                value={condutor}
-                onChange={(e) => setCondutor(e.target.value)}
-              >
+              <label>Usuário</label>
+              <select value={usuario} onChange={(e) => setUsuario(e.target.value)}>
                 <option value="todos">Todos</option>
-                {conductoresEnDatos.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.nome}
+                {usuariosEnDatos.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Cartão (TDC)</label>
+              <select value={tdc} onChange={(e) => setTdc(e.target.value)}>
+                <option value="todos">Todos</option>
+                {tarjetas.map((t) => (
+                  <option key={t} value={t}>
+                    ••{t}
                   </option>
                 ))}
               </select>
@@ -144,7 +162,8 @@ export default function AdminApp({ nome }: { nome: string }) {
           </div>
 
           <p className="note">
-            Total do período: <strong>R$ {total.toFixed(2)}</strong>
+            Período: <strong>{inicio || "—"}</strong> a <strong>{fim || "—"}</strong> ·
+            Total: <strong>R$ {total.toFixed(2)}</strong>
           </p>
 
           {cargando ? (
@@ -167,7 +186,7 @@ export default function AdminApp({ nome }: { nome: string }) {
                     <th>Categoria</th>
                     <th>Pagamento</th>
                     <th>Cartão</th>
-                    <th>Condutor</th>
+                    <th>Usuário</th>
                     <th>Foto</th>
                   </tr>
                 </thead>
@@ -177,9 +196,7 @@ export default function AdminApp({ nome }: { nome: string }) {
                       <td className="codigo">{codigoId(e.id)}</td>
                       <td>{e.data_documento || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>
-                      <td className="num">
-                        {Number(e.valor ?? 0).toFixed(2)}
-                      </td>
+                      <td className="num">{Number(e.valor ?? 0).toFixed(2)}</td>
                       <td>{e.centro_custo || "—"}</td>
                       <td>{e.categoria || "—"}</td>
                       <td>

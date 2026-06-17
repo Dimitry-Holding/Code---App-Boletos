@@ -91,7 +91,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
           <span className="spacer" />
         </div>
 
-        <h2 style={{ fontSize: 18 }}>Condutores e usuários</h2>
+        <h2 style={{ fontSize: 18 }}>Usuários</h2>
 
         <div className="card">
           <strong>Novo usuário</strong>
@@ -122,7 +122,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
             <div className="field">
               <label>Tipo</label>
               <select value={fRole} onChange={(e) => setFRole(e.target.value)}>
-                <option value="conductor">Condutor</option>
+                <option value="conductor">Usuário</option>
                 <option value="admin">Administrador</option>
               </select>
             </div>
@@ -165,7 +165,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                   <span
                     className={`badge ${u.role === "admin" ? "media" : "alta"}`}
                   >
-                    {u.role === "admin" ? "Administrador" : "Condutor"}
+                    {u.role === "admin" ? "Administrador" : "Usuário"}
                   </span>
                 </div>
                 <div className="meta">{u.email}</div>

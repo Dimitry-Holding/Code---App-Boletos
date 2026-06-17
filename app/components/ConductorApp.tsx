@@ -167,7 +167,7 @@ export default function ConductorApp({
 
   return (
     <>
-      <TopBar nome={nome} papel="Condutor" />
+      <TopBar nome={nome} papel="Usuário" />
       <main className="wrap">
         {estado === "inicio" && (
           <div className="card">
