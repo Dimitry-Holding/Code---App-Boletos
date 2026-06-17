@@ -1,5 +1,5 @@
-import { BoletoSchema, type Boleto } from "@/lib/boleto";
 import { CATEGORIAS, CATEGORIA_DEFECTO } from "@/lib/categorias";
+import { type Extraccion } from "@/lib/evento";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -7,45 +7,41 @@ export const maxDuration = 60;
 const MODELO = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`;
 
-const TIPOS = ["boleto", "nota_fiscal", "cupom_fiscal", "recibo", "outro"];
+const TIPOS_PAGO = ["debito", "credito", "outro"];
 const CONFIANZAS = ["alta", "media", "baixa"];
 
-const SYSTEM_PROMPT = `Eres un asistente experto en leer documentos fiscales brasileños:
-boletos bancários, notas fiscais, cupons fiscais e recibos.
+const SYSTEM_PROMPT = `Você é um assistente especialista em ler documentos fiscais brasileiros:
+notas fiscais, cupons fiscais (NFC-e), boletos e recibos de compras feitas com cartão.
 
-Respondé EXCLUSIVAMENTE con un objeto JSON válido (sin markdown, sin comentarios, sin texto
-adicional) con EXACTAMENTE estas claves:
+Responda EXCLUSIVAMENTE com um objeto JSON válido (sem markdown, sem comentários, sem texto
+adicional) com EXATAMENTE estas chaves:
 {
-  "tipo": uno de [boleto, nota_fiscal, cupom_fiscal, recibo, outro],
   "fornecedor": string,
-  "cnpj_cpf": string,
   "valor": number,
   "moeda": string,
-  "data_emissao": string,
-  "data_vencimento": string,
-  "numero_documento": string,
-  "linha_digitavel": string,
+  "data_documento": string,
+  "categoria": string,
+  "tipo_pagamento": um de [debito, credito, outro],
+  "ultimos4": string,
   "descricao": string,
-  "categoria_sugerida": string,
-  "confianca": uno de [alta, media, baixa]
+  "confianca": um de [alta, media, baixa]
 }
 
-Reglas:
-- Fechas SIEMPRE en formato YYYY-MM-DD. Si no aparece, usá "".
-- "valor": el valor total a pagar, como número decimal (ej: 1234.56). Si no hay, 0.
+Regras:
+- "fornecedor": razão social ou nome do estabelecimento/emissor.
+- "valor": valor total pago, como número decimal (ex: 1234.56). Se não houver, 0.
 - "moeda": normalmente "BRL".
-- "cnpj_cpf": el documento del beneficiário/fornecedor, con su formato original. "" si no aparece.
-- "fornecedor": a razão social o nombre del beneficiário/emisor del documento.
-- "numero_documento": número da nota fiscal o del documento/boleto.
-- "linha_digitavel": la línea digitable del boleto (los números largos del código de barras),
-  sin espacios si es posible. "" si el documento no es un boleto.
-- "descricao": resumen corto (una frase) de qué es el gasto.
-- "categoria_sugerida": elegí la categoría MÁS adecuada SOLO de esta lista exacta
-  (no inventes otras; si ninguna encaja claramente, usá "Outros"):
+- "data_documento": data do documento no formato YYYY-MM-DD. Se não aparecer, "".
+- "tipo_pagamento": "debito" ou "credito" conforme o cupom (CARTÃO DÉBITO / CRÉDITO).
+  Se não for possível saber, "outro".
+- "ultimos4": os últimos 4 dígitos do cartão, se aparecerem (ex: "1234"). "" se não aparecer.
+- "descricao": resumo curto (uma frase) do que foi a compra.
+- "categoria": escolha a categoria MAIS adequada APENAS desta lista exata
+  (não invente outras; se nenhuma encaixar claramente, use "Outros"):
 ${CATEGORIAS.map((c) => `  - ${c}`).join("\n")}
-- "confianca": tu confianza global en la extracción.
+- "confianca": sua confiança geral na extração.
 
-No inventes datos: si un campo no está visible, dejalo vacío ("") o en 0.`;
+Não invente dados: se um campo não estiver visível, deixe vazio ("") ou 0.`;
 
 type CuerpoSolicitud = {
   imageBase64?: string;
@@ -58,7 +54,7 @@ export async function POST(req: Request) {
     return Response.json(
       {
         error:
-          "Falta la variable GEMINI_API_KEY. Conseguí una gratis en https://aistudio.google.com/apikey y ponela en .env.local.",
+          "Falta GEMINI_API_KEY. Conseguí una gratis en https://aistudio.google.com/apikey y ponela en .env.local.",
       },
       { status: 500 },
     );
@@ -87,33 +83,23 @@ export async function POST(req: Request) {
           role: "user",
           parts: [
             { inline_data: { mime_type: mediaType, data: imageBase64 } },
-            {
-              text: "Extraé los datos de este documento fiscal brasileño y devolvé solo el JSON.",
-            },
+            { text: "Extraia os dados deste documento fiscal e devolva apenas o JSON." },
           ],
         },
       ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0,
-      },
+      generationConfig: { responseMimeType: "application/json", temperature: 0 },
     });
 
     // El nivel gratuito de Gemini a veces devuelve errores transitorios (429/503).
-    // Reintentamos con espera creciente para que sea estable.
     const REINTENTABLES = new Set([408, 429, 500, 502, 503, 504]);
     let respuesta: Response | null = null;
-    // La respuesta de Gemini es JSON dinámico; lo recorremos con optional chaining.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any = null;
 
     for (let intento = 0; intento < 3; intento++) {
       respuesta = await fetch(ENDPOINT, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
+        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: cuerpoGemini,
       });
       data = await respuesta.json();
@@ -138,8 +124,7 @@ export async function POST(req: Request) {
 
     if (!texto) {
       const motivo =
-        data?.candidates?.[0]?.finishReason ||
-        data?.promptFeedback?.blockReason;
+        data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason;
       return Response.json(
         {
           error: `Gemini no devolvió contenido${motivo ? ` (${motivo})` : ""}. Probá con otra foto más nítida.`,
@@ -166,7 +151,7 @@ export async function POST(req: Request) {
   }
 }
 
-/** Intenta parsear JSON aunque venga envuelto en texto o en bloques ```json. */
+/** Intenta parsear JSON aunque venga envuelto en texto o en bloques de código. */
 function extraerJSON(texto: string): Record<string, unknown> | null {
   const t = texto.trim();
   try {
@@ -198,7 +183,7 @@ function parseValor(v: unknown): number {
   if (typeof v !== "string") return 0;
   let s = v.replace(/[^0-9.,-]/g, "");
   if (s.includes(".") && s.includes(",")) {
-    s = s.replace(/\./g, "").replace(",", "."); // formato brasileño: . miles, , decimal
+    s = s.replace(/\./g, "").replace(",", ".");
   } else if (s.includes(",")) {
     s = s.replace(",", ".");
   }
@@ -207,26 +192,24 @@ function parseValor(v: unknown): number {
 }
 
 /** Garantiza que la respuesta cumpla el esquema (categoría siempre dentro de la lista). */
-function normalizar(o: Record<string, unknown>): Boleto {
-  const candidato = {
-    tipo: TIPOS.includes(o.tipo as string) ? (o.tipo as string) : "outro",
+function normalizar(o: Record<string, unknown>): Extraccion {
+  const cat = comoTexto(o.categoria);
+  const tipo = comoTexto(o.tipo_pagamento).toLowerCase();
+  return {
     fornecedor: comoTexto(o.fornecedor),
-    cnpj_cpf: comoTexto(o.cnpj_cpf),
     valor: parseValor(o.valor),
     moeda: comoTexto(o.moeda) || "BRL",
-    data_emissao: comoTexto(o.data_emissao),
-    data_vencimento: comoTexto(o.data_vencimento),
-    numero_documento: comoTexto(o.numero_documento),
-    linha_digitavel: comoTexto(o.linha_digitavel),
-    descricao: comoTexto(o.descricao),
-    categoria_sugerida: (CATEGORIAS as readonly string[]).includes(
-      o.categoria_sugerida as string,
-    )
-      ? (o.categoria_sugerida as string)
+    data_documento: comoTexto(o.data_documento),
+    categoria: (CATEGORIAS as readonly string[]).includes(cat)
+      ? (cat as Extraccion["categoria"])
       : CATEGORIA_DEFECTO,
-    confianca: CONFIANZAS.includes(o.confianca as string)
-      ? (o.confianca as string)
-      : "media",
+    tipo_pagamento: (TIPOS_PAGO.includes(tipo)
+      ? tipo
+      : "outro") as Extraccion["tipo_pagamento"],
+    ultimos4: comoTexto(o.ultimos4).replace(/\D/g, "").slice(-4),
+    descricao: comoTexto(o.descricao),
+    confianca: (CONFIANZAS.includes(comoTexto(o.confianca))
+      ? comoTexto(o.confianca)
+      : "media") as Extraccion["confianca"],
   };
-  return BoletoSchema.parse(candidato);
 }
