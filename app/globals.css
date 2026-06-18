@@ -178,6 +178,20 @@ button {
   background: #0f172a;
 }
 
+.pdf-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: var(--primary-soft);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 28px;
+  color: var(--primary);
+  font-weight: 600;
+}
+
 /* ---------- Campos ---------- */
 .field {
   margin-top: 12px;

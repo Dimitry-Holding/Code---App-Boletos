@@ -4,15 +4,16 @@ import { useEffect, useRef, useState, useMemo } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { CATEGORIAS, CATEGORIA_DEFECTO } from "@/lib/categorias";
 import { CENTROS_CUSTO } from "@/lib/centros";
-import {
-  type Evento,
-  type Extraccion,
-  codigoId,
-} from "@/lib/evento";
+import { type Evento, type Extraccion, codigoId } from "@/lib/evento";
 import TopBar from "./TopBar";
 
 type Estado = "inicio" | "procesando" | "revision";
 type Borrador = Extraccion & { centro_custo: string };
+type Captura = { dataUrl: string; mediaType: string; esPdf: boolean };
+
+// Límite del PDF: el cuerpo de la request en Vercel no debe pasar ~4,5 MB.
+// Un PDF de 3 MB en base64 queda por debajo de ese límite.
+const MAX_PDF_BYTES = 3 * 1024 * 1024;
 
 const MESES = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -42,15 +43,18 @@ export default function ConductorApp({
   const supabase = useMemo(() => createClient(), []);
   const [estado, setEstado] = useState<Estado>("inicio");
   const [error, setError] = useState<string | null>(null);
-  const [imagen, setImagen] = useState<string | null>(null);
+  const [captura, setCaptura] = useState<Captura | null>(null);
   const [borrador, setBorrador] = useState<Borrador>(BORRADOR_VACIO);
   const [guardando, setGuardando] = useState(false);
   const [eventos, setEventos] = useState<Evento[]>([]);
-  const inputRef = useRef<HTMLInputElement>(null);
+
+  const camRef = useRef<HTMLInputElement>(null);
+  const galRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
 
   const hoy = new Date();
   const [ano, setAno] = useState(hoy.getFullYear());
-  const [mes, setMes] = useState(hoy.getMonth() + 1); // 1-12
+  const [mes, setMes] = useState(hoy.getMonth() + 1);
 
   useEffect(() => {
     cargarEventos();
@@ -73,25 +77,45 @@ export default function ConductorApp({
 
   const total = eventosFiltrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
 
-  async function alElegirFoto(e: React.ChangeEvent<HTMLInputElement>) {
+  async function alElegir(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) await procesarFoto(file);
-    if (inputRef.current) inputRef.current.value = "";
+    if (file) await procesarArchivo(file);
+    e.target.value = "";
   }
 
-  async function procesarFoto(file: File) {
+  async function procesarArchivo(file: File) {
     setError(null);
     setEstado("procesando");
     try {
-      const dataUrl = await redimensionar(file);
-      setImagen(dataUrl);
+      let cap: Captura;
+      if (file.type === "application/pdf") {
+        if (file.size > MAX_PDF_BYTES) {
+          throw new Error(
+            "PDF muito grande (máx. 3 MB). Tente uma foto ou um PDF menor.",
+          );
+        }
+        cap = {
+          dataUrl: await leerComoDataUrl(file),
+          mediaType: "application/pdf",
+          esPdf: true,
+        };
+      } else if (file.type.startsWith("image/")) {
+        cap = {
+          dataUrl: await redimensionar(file),
+          mediaType: "image/jpeg",
+          esPdf: false,
+        };
+      } else {
+        throw new Error("Formato não suportado. Use foto ou PDF.");
+      }
+      setCaptura(cap);
 
       const resp = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          imageBase64: dataUrl.split(",")[1],
-          mediaType: "image/jpeg",
+          imageBase64: cap.dataUrl.split(",")[1],
+          mediaType: cap.mediaType,
         }),
       });
       const data = await resp.json();
@@ -102,7 +126,7 @@ export default function ConductorApp({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido.");
       setEstado("inicio");
-      setImagen(null);
+      setCaptura(null);
     }
   }
 
@@ -111,7 +135,7 @@ export default function ConductorApp({
   }
 
   async function guardar() {
-    if (!imagen) return;
+    if (!captura) return;
     if (!borrador.centro_custo) {
       setError("Selecione o centro de custo.");
       return;
@@ -119,11 +143,12 @@ export default function ConductorApp({
     setGuardando(true);
     setError(null);
     try {
-      const path = `${userId}/${crypto.randomUUID()}.jpg`;
-      const blob = await (await fetch(imagen)).blob();
+      const ext = captura.esPdf ? "pdf" : "jpg";
+      const path = `${userId}/${crypto.randomUUID()}.${ext}`;
+      const blob = await (await fetch(captura.dataUrl)).blob();
       const up = await supabase.storage
         .from("notas")
-        .upload(path, blob, { contentType: "image/jpeg" });
+        .upload(path, blob, { contentType: captura.mediaType });
       if (up.error) throw up.error;
 
       const ins = await supabase.from("eventos").insert({
@@ -153,7 +178,7 @@ export default function ConductorApp({
 
   function cancelar() {
     setEstado("inicio");
-    setImagen(null);
+    setCaptura(null);
     setBorrador(BORRADOR_VACIO);
     setError(null);
   }
@@ -165,42 +190,91 @@ export default function ConductorApp({
     setEventos((prev) => prev.filter((e) => e.id !== ev.id));
   }
 
+  function vistaPrevia() {
+    if (!captura) return null;
+    if (captura.esPdf) {
+      return (
+        <div className="pdf-box">
+          <span style={{ fontSize: 38 }}>📄</span>
+          <span>PDF carregado</span>
+        </div>
+      );
+    }
+    return <img src={captura.dataUrl} alt="nota" className="preview" />;
+  }
+
   return (
     <>
       <TopBar nome={nome} papel="Usuário" />
       <main className="wrap">
         {estado === "inicio" && (
           <div className="card">
-            <label className="capture">
-              <span className="icon">📷</span>
-              <strong>Fotografar nota fiscal</strong>
-              <span className="hint">Toque para abrir a câmera</span>
-              <input
-                ref={inputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                className="hidden"
-                onChange={alElegirFoto}
-              />
-            </label>
+            <strong>Nova nota fiscal</strong>
+            <p className="note" style={{ marginTop: 4 }}>
+              Escolha como carregar o documento:
+            </p>
+            <button
+              className="btn btn-primary btn-block"
+              style={{ marginTop: 12 }}
+              onClick={() => camRef.current?.click()}
+            >
+              📷 Tirar foto
+            </button>
+            <button
+              className="btn btn-light btn-block"
+              style={{ marginTop: 10 }}
+              onClick={() => galRef.current?.click()}
+            >
+              🖼️ Carregar da galeria
+            </button>
+            <button
+              className="btn btn-light btn-block"
+              style={{ marginTop: 10 }}
+              onClick={() => pdfRef.current?.click()}
+            >
+              📄 Carregar PDF
+            </button>
+
+            <input
+              ref={camRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              className="hidden"
+              onChange={alElegir}
+            />
+            <input
+              ref={galRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={alElegir}
+            />
+            <input
+              ref={pdfRef}
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={alElegir}
+            />
+
             {error && <div className="error-box">{error}</div>}
           </div>
         )}
 
         {estado === "procesando" && (
           <div className="card">
-            {imagen && <img src={imagen} alt="nota" className="preview" />}
+            {vistaPrevia()}
             <div className="status">
               <div className="spinner" />
-              <div>Lendo a nota com IA…</div>
+              <div>Lendo o documento com IA…</div>
             </div>
           </div>
         )}
 
         {estado === "revision" && (
           <div className="card">
-            {imagen && <img src={imagen} alt="nota" className="preview" />}
+            {vistaPrevia()}
             <div className="row" style={{ marginTop: 12 }}>
               <span className={`badge ${borrador.confianca}`}>
                 Confiança: {borrador.confianca}
@@ -257,10 +331,7 @@ export default function ConductorApp({
               <select
                 value={borrador.categoria}
                 onChange={(e) =>
-                  actualizar(
-                    "categoria",
-                    e.target.value as Borrador["categoria"],
-                  )
+                  actualizar("categoria", e.target.value as Borrador["categoria"])
                 }
               >
                 {CATEGORIAS.map((c) => (
@@ -380,10 +451,7 @@ export default function ConductorApp({
                 </div>
                 <div className="row" style={{ marginTop: 8 }}>
                   <span className="spacer" />
-                  <button
-                    className="btn-danger-ghost"
-                    onClick={() => eliminar(ev)}
-                  >
+                  <button className="btn-danger-ghost" onClick={() => eliminar(ev)}>
                     🗑️ Excluir
                   </button>
                 </div>
@@ -394,6 +462,16 @@ export default function ConductorApp({
       </main>
     </>
   );
+}
+
+/** Lee un archivo como data URL (para PDFs, que se envían tal cual). */
+function leerComoDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
+    reader.readAsDataURL(file);
+  });
 }
 
 /** Redimensiona y comprime la imagen antes de subirla y enviarla a la IA. */
