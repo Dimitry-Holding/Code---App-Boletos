@@ -48,22 +48,23 @@ export function codigoId(id: number): string {
   return "DMT-" + String(id).padStart(6, "0");
 }
 
-/** Texto seguro para nombre de archivo (sin acentos ni símbolos). */
-export function slug(texto: string, max = 30): string {
+/** Quita caracteres no permitidos en nombres de archivo, conservando legibilidad. */
+export function limparNome(texto: string): string {
   return (texto || "")
-    .normalize("NFD")
-    .replace(/[^a-zA-Z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, max)
-    .toUpperCase();
+    .replace(/[\\/:*?"<>|]+/g, " ") // caracteres ilegales en nombres de archivo
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-/** Nombre de archivo de la foto: Fornecedor-Data-Valor-Cartao.ext */
+/**
+ * Nombre de archivo de la foto: Fornecedor-Data-R$Valor-Cartao.ext
+ * Ej: "LAVANDERIA ASA SUL LTDA-2026-06-18-R$200,45-1261.jpg"
+ */
 export function nomeArquivoFoto(e: Evento): string {
   const ext = e.foto_path.toLowerCase().endsWith(".pdf") ? "pdf" : "jpg";
-  const forn = slug(e.fornecedor || "") || "FORNECEDOR";
+  const forn = limparNome(e.fornecedor || "") || "Fornecedor";
   const data = e.data_documento || "sem-data";
-  const valor = Number(e.valor ?? 0).toFixed(2).replace(".", "-");
+  const valor = "R$" + Number(e.valor ?? 0).toFixed(2).replace(".", ",");
   const cartao = e.ultimos4 || "0000";
   return `${forn}-${data}-${valor}-${cartao}.${ext}`;
 }
