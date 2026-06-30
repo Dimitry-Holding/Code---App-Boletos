@@ -3,10 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { usuarioParaEmail } from "@/lib/auth";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [usuario, setUsuario] = useState("");
   const [senha, setSenha] = useState("");
   const [erro, setErro] = useState<string | null>(null);
   const [cargando, setCargando] = useState(false);
@@ -17,11 +18,11 @@ export default function LoginPage() {
     setCargando(true);
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword({
-      email: email.trim(),
+      email: usuarioParaEmail(usuario),
       password: senha,
     });
     if (error) {
-      setErro("E-mail ou senha incorretos.");
+      setErro("Usuário ou senha incorretos.");
       setCargando(false);
       return;
     }
@@ -36,12 +37,14 @@ export default function LoginPage() {
         <p>Dimitry — registro de compras com cartão</p>
 
         <div className="field">
-          <label>E-mail</label>
+          <label>Usuário</label>
           <input
-            type="email"
-            autoComplete="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            autoCapitalize="none"
+            autoCorrect="off"
+            autoComplete="username"
+            placeholder="ex: nome.sobrenome"
+            value={usuario}
+            onChange={(e) => setUsuario(e.target.value)}
             required
           />
         </div>

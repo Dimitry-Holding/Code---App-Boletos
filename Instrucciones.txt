@@ -1,0 +1,22 @@
+Las instrucciones para la APP:
+
+Como se usara:
+Los conductores, pilotos o personal que use tarjetas de Dimitry van a escanear todos los dias las notas fiscales de las compras que hacen, la idea es evitar que tengan que traer todas las semanas las notas aqui y se procese manualmente. 
+
+Ademas, habra un uso de administrador, el cual debera tener acceso a las tablas y las fotos para descargarlo y armar las tablas aqui de control.
+
+Hay que diferencial el nivel de acceso. Nada detallado puede ser acessado por los conductores, ellos solo tienen la opcion de cargar y de revisar lo que han cargado, incluyendo borrar cargas indebidas. Lo ideal es tener filtro de meses y años también para que puedan tener todo.
+
+El administrador no cargará pero puede descargar todo. La idea es tener acceso por mes y año a la data cargada incluyendo la foto que genero el input en la tabla, es decir, tienes que crear un ID único por evento que asocie la foto con el numero en el excel.
+
+El conductor no puede tocar ese numero, es solo administrado por el administrador.
+
+La pagina web tiene que tener un diseño simple pero moderno, algo mas elaborado que lo que esta hecho.
+
+La tabla a llenar por la IA debe ser Proveedor, ID, valor, moneda, centro de costo, fecha, categoria (que te dare la tabla), si fue debito o credito, cuatro últimos números. Y cualquier otra cosa que veas necesario.
+
+Todo debe ser hecho en portugués.
+
+La app debe funcionar en la web, y debe tener configurada la capacidad de tomar las fotos directas desde un celular tanto android como chrome.
+
+Debemos almacenar las fotos también, me avisas si necesitas un drive o similar. Aqui usamos Sharepoint, te puedo dar uno solo para esto.

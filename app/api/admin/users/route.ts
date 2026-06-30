@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { usuarioParaEmail } from "@/lib/auth";
 
 export const runtime = "nodejs";
 
@@ -55,10 +56,10 @@ export async function GET() {
 export async function POST(req: Request) {
   if (!(await exigirAdmin())) return SIN_PERMISO;
 
-  const { email, nome, senha, role } = await req.json().catch(() => ({}));
-  if (!email || !nome || !senha) {
+  const { usuario, nome, senha, role } = await req.json().catch(() => ({}));
+  if (!usuario || !nome || !senha) {
     return Response.json(
-      { error: "Faltam dados (nome, e-mail, senha)." },
+      { error: "Faltam dados (nome, usuário, senha)." },
       { status: 400 },
     );
   }
@@ -71,7 +72,7 @@ export async function POST(req: Request) {
 
   const admin = createAdminClient();
   const { data, error } = await admin.auth.admin.createUser({
-    email: String(email).trim(),
+    email: usuarioParaEmail(String(usuario)),
     password: String(senha),
     email_confirm: true,
     user_metadata: { nome: String(nome).trim() },

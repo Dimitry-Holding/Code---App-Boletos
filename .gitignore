@@ -20,3 +20,6 @@ Thumbs.db
 *.tsbuildinfo
 .vercel
 .claude/
+
+# credenciales locales (NUNCA subir a GitHub)
+USUARIOS_Y_CONTRASENAS.txt

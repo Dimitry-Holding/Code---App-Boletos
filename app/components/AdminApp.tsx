@@ -182,7 +182,6 @@ export default function AdminApp({ nome }: { nome: string }) {
                     <th>Data</th>
                     <th>Fornecedor</th>
                     <th>Valor</th>
-                    <th>Centro de custo</th>
                     <th>Categoria</th>
                     <th>Pagamento</th>
                     <th>Cartão</th>
@@ -197,7 +196,6 @@ export default function AdminApp({ nome }: { nome: string }) {
                       <td>{e.data_documento || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>
                       <td className="num">{Number(e.valor ?? 0).toFixed(2)}</td>
-                      <td>{e.centro_custo || "—"}</td>
                       <td>{e.categoria || "—"}</td>
                       <td>
                         {TIPO_PAGAMENTO_LABEL[e.tipo_pagamento ?? ""] ?? "—"}
