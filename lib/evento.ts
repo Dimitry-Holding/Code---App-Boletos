@@ -48,6 +48,26 @@ export function codigoId(id: number): string {
   return "DMT-" + String(id).padStart(6, "0");
 }
 
+/** Texto seguro para nombre de archivo (sin acentos ni símbolos). */
+export function slug(texto: string, max = 30): string {
+  return (texto || "")
+    .normalize("NFD")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, max)
+    .toUpperCase();
+}
+
+/** Nombre de archivo de la foto: Fornecedor-Data-Valor-Cartao.ext */
+export function nomeArquivoFoto(e: Evento): string {
+  const ext = e.foto_path.toLowerCase().endsWith(".pdf") ? "pdf" : "jpg";
+  const forn = slug(e.fornecedor || "") || "FORNECEDOR";
+  const data = e.data_documento || "sem-data";
+  const valor = Number(e.valor ?? 0).toFixed(2).replace(".", "-");
+  const cartao = e.ultimos4 || "0000";
+  return `${forn}-${data}-${valor}-${cartao}.${ext}`;
+}
+
 export const TIPO_PAGAMENTO_LABEL: Record<string, string> = {
   debito: "Débito",
   credito: "Crédito",

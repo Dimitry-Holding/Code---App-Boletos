@@ -3,10 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx";
+import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
 import {
   type Evento,
   codigoId,
+  nomeArquivoFoto,
   COLUNAS_EXCEL,
   TIPO_PAGAMENTO_LABEL,
 } from "@/lib/evento";
@@ -33,6 +35,7 @@ export default function AdminApp({ nome }: { nome: string }) {
   const [fim, setFim] = useState(isoHoje());
   const [usuario, setUsuario] = useState("todos");
   const [tdc, setTdc] = useState("todos");
+  const [baixando, setBaixando] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -99,6 +102,69 @@ export default function AdminApp({ nome }: { nome: string }) {
     window.open(data.signedUrl, "_blank");
   }
 
+  function descargarBlob(blob: Blob, nome: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = nome;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  /** Descarga una foto con el nombre Fornecedor-Data-Valor-Cartao. */
+  async function baixarFoto(ev: Evento) {
+    const { data, error } = await supabase.storage
+      .from("notas")
+      .download(ev.foto_path);
+    if (error || !data) {
+      alert("Não foi possível baixar a foto.");
+      return;
+    }
+    descargarBlob(data, nomeArquivoFoto(ev));
+  }
+
+  /** Descarga TODAS las fotos del período filtrado en un único ZIP. */
+  async function baixarTodas() {
+    if (filtrados.length === 0) return;
+    setBaixando(`0/${filtrados.length}`);
+    try {
+      const zip = new JSZip();
+      const usados = new Set<string>();
+      let i = 0;
+      for (const ev of filtrados) {
+        i++;
+        setBaixando(`${i}/${filtrados.length}`);
+        const { data } = await supabase.storage.from("notas").download(ev.foto_path);
+        if (!data) continue;
+        let nome = nomeArquivoFoto(ev);
+        if (usados.has(nome)) {
+          const punto = nome.lastIndexOf(".");
+          nome = `${nome.slice(0, punto)}-${ev.id}${nome.slice(punto)}`;
+        }
+        usados.add(nome);
+        zip.file(nome, data);
+      }
+      const blob = await zip.generateAsync({ type: "blob" });
+      descargarBlob(blob, `fotos_${inicio}_a_${fim}.zip`);
+    } catch {
+      alert("Erro ao gerar o ZIP.");
+    } finally {
+      setBaixando(null);
+    }
+  }
+
+  /** Borra una nota (y su foto). Solo el admin. */
+  async function eliminar(ev: Evento) {
+    if (!confirm(`Excluir ${codigoId(ev.id)} (${ev.fornecedor ?? ""})?`)) return;
+    await supabase.storage.from("notas").remove([ev.foto_path]);
+    const { error } = await supabase.from("eventos").delete().eq("id", ev.id);
+    if (error) {
+      alert("Não foi possível excluir.");
+      return;
+    }
+    setEventos((prev) => prev.filter((x) => x.id !== ev.id));
+  }
+
   return (
     <>
       <TopBar nome={nome} papel="Administrador" />
@@ -110,6 +176,13 @@ export default function AdminApp({ nome }: { nome: string }) {
           <Link href="/usuarios" className="btn btn-light">
             👥 Usuários
           </Link>
+          <button
+            className="btn btn-light"
+            onClick={baixarTodas}
+            disabled={filtrados.length === 0 || baixando !== null}
+          >
+            {baixando ? `📷 ${baixando}…` : "📷 Fotos (ZIP)"}
+          </button>
           <button
             className="btn btn-primary"
             onClick={exportarExcel}
@@ -186,7 +259,7 @@ export default function AdminApp({ nome }: { nome: string }) {
                     <th>Pagamento</th>
                     <th>Cartão</th>
                     <th>Usuário</th>
-                    <th>Foto</th>
+                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,12 +276,17 @@ export default function AdminApp({ nome }: { nome: string }) {
                       <td>{e.ultimos4 ? `••${e.ultimos4}` : "—"}</td>
                       <td>{perfiles[e.conductor_id] ?? "—"}</td>
                       <td>
-                        <button
-                          className="btn-ghost"
-                          onClick={() => verFoto(e.foto_path)}
-                        >
-                          👁️ Ver
-                        </button>
+                        <div className="row" style={{ gap: 4 }}>
+                          <button className="btn-ghost" onClick={() => verFoto(e.foto_path)}>
+                            👁️
+                          </button>
+                          <button className="btn-ghost" onClick={() => baixarFoto(e)}>
+                            ⬇️
+                          </button>
+                          <button className="btn-danger-ghost" onClick={() => eliminar(e)}>
+                            🗑️
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
