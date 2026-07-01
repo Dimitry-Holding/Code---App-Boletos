@@ -18,6 +18,7 @@ export type Evento = {
   fornecedor: string | null;
   valor: number | null;
   moeda: string | null;
+  centro_custo: string | null;
   data_documento: string | null;
   categoria: string | null;
   tipo_pagamento: string | null;
@@ -38,6 +39,13 @@ export type Cartao = {
 
 /** Categoría asignada a un usuario. */
 export type Categoria = {
+  id: number;
+  user_id: string;
+  nome: string;
+};
+
+/** Centro de custo asignado a un usuario. */
+export type CentroCusto = {
   id: number;
   user_id: string;
   nome: string;
@@ -98,6 +106,7 @@ export const COLUNAS_EXCEL: {
   { titulo: "Fornecedor", valor: (e) => e.fornecedor ?? "" },
   { titulo: "Valor", valor: (e) => e.valor ?? 0 },
   { titulo: "Moeda", valor: (e) => e.moeda ?? "" },
+  { titulo: "Centro de custo", valor: (e) => e.centro_custo ?? "" },
   { titulo: "Categoria", valor: (e) => e.categoria ?? "" },
   { titulo: "Pagamento", valor: (e) => TIPO_PAGAMENTO_LABEL[e.tipo_pagamento ?? ""] ?? "" },
   { titulo: "Cartão", valor: (e) => (e.ultimos4 ? `••${e.ultimos4}` : "") },

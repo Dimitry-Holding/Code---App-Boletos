@@ -6,6 +6,7 @@ import {
   type Evento,
   type Cartao,
   type Categoria,
+  type CentroCusto,
   type Extraccion,
   codigoId,
   labelCartao,
@@ -14,7 +15,7 @@ import {
 import TopBar from "./TopBar";
 
 type Estado = "inicio" | "procesando" | "revision" | "edicion";
-type Borrador = Extraccion;
+type Borrador = Extraccion & { centro_custo: string };
 type Captura = { dataUrl: string; mediaType: string; esPdf: boolean };
 
 const MAX_PDF_BYTES = 3 * 1024 * 1024;
@@ -34,6 +35,7 @@ const BORRADOR_VACIO: Borrador = {
   ultimos4: "",
   descricao: "",
   confianca: "media",
+  centro_custo: "",
 };
 
 export default function ConductorApp({
@@ -52,6 +54,8 @@ export default function ConductorApp({
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [centros, setCentros] = useState<CentroCusto[]>([]);
+  const [filtroCentro, setFiltroCentro] = useState("todos");
   const [editId, setEditId] = useState<number | null>(null);
   const [fotoEditUrl, setFotoEditUrl] = useState<string | null>(null);
 
@@ -69,19 +73,25 @@ export default function ConductorApp({
   }, []);
 
   async function cargarTodo() {
-    const [{ data: evs }, { data: cs }, { data: cats }] = await Promise.all([
-      supabase.from("eventos").select("*").order("id", { ascending: false }),
-      supabase.from("cartoes").select("*").order("apelido"),
-      supabase.from("categorias").select("*").order("nome"),
-    ]);
+    const [{ data: evs }, { data: cs }, { data: cats }, { data: ccs }] =
+      await Promise.all([
+        supabase.from("eventos").select("*").order("id", { ascending: false }),
+        supabase.from("cartoes").select("*").order("apelido"),
+        supabase.from("categorias").select("*").order("nome"),
+        supabase.from("centros_custo").select("*").order("nome"),
+      ]);
     setEventos((evs as Evento[]) ?? []);
     setCartoes((cs as Cartao[]) ?? []);
     setCategorias((cats as Categoria[]) ?? []);
+    setCentros((ccs as CentroCusto[]) ?? []);
   }
 
   const eventosFiltrados = eventos.filter((e) => {
     const d = new Date(e.data_documento || e.criado_em);
-    return d.getFullYear() === ano && d.getMonth() + 1 === mes;
+    if (d.getFullYear() !== ano || d.getMonth() + 1 !== mes) return false;
+    if (filtroCentro !== "todos" && (e.centro_custo || "") !== filtroCentro)
+      return false;
+    return true;
   });
   const total = eventosFiltrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
 
@@ -128,6 +138,8 @@ export default function ConductorApp({
         ...data,
         ultimos4: cartaoMatch ? cartaoMatch.ultimos4 : "",
         categoria: categorias.some((c) => c.nome === data.categoria) ? data.categoria : "",
+        // Centro de custo: por defecto el único (o vacío si tiene varios).
+        centro_custo: centros.length === 1 ? centros[0].nome : "",
       });
       setEstado("revision");
     } catch (err) {
@@ -142,6 +154,7 @@ export default function ConductorApp({
   }
 
   function validar(): string | null {
+    if (!borrador.centro_custo) return "Selecione o centro de custo.";
     if (!borrador.ultimos4) return "Selecione o cartão.";
     if (!borrador.categoria) return "Selecione a categoria.";
     return null;
@@ -170,6 +183,7 @@ export default function ConductorApp({
         fornecedor: borrador.fornecedor || null,
         valor: borrador.valor || null,
         moeda: borrador.moeda || "BRL",
+        centro_custo: borrador.centro_custo,
         data_documento: borrador.data_documento || null,
         categoria: borrador.categoria,
         tipo_pagamento: borrador.tipo_pagamento,
@@ -202,6 +216,7 @@ export default function ConductorApp({
       ultimos4: ev.ultimos4 ?? "",
       descricao: ev.descricao ?? "",
       confianca: (ev.confianca as Borrador["confianca"]) ?? "media",
+      centro_custo: ev.centro_custo ?? "",
     });
     setFotoEditUrl(null);
     const { data } = await supabase.storage
@@ -232,6 +247,7 @@ export default function ConductorApp({
           fornecedor: borrador.fornecedor || null,
           valor: borrador.valor || null,
           moeda: borrador.moeda || "BRL",
+          centro_custo: borrador.centro_custo,
           data_documento: borrador.data_documento || null,
           categoria: borrador.categoria,
           tipo_pagamento: borrador.tipo_pagamento,
@@ -270,8 +286,8 @@ export default function ConductorApp({
   }
 
   const editando = estado === "edicion";
-  const sinTarjetas = cartoes.length === 0;
-  const sinCategorias = categorias.length === 0;
+  const faltaAtribuir =
+    cartoes.length === 0 || categorias.length === 0 || centros.length === 0;
 
   function previa() {
     if (editando) {
@@ -305,11 +321,10 @@ export default function ConductorApp({
         {estado === "inicio" && (
           <div className="card">
             <strong>Nova nota fiscal</strong>
-            {sinTarjetas || sinCategorias ? (
+            {faltaAtribuir ? (
               <div className="error-box" style={{ marginTop: 10 }}>
-                Sua conta ainda não tem {sinTarjetas ? "cartões" : ""}
-                {sinTarjetas && sinCategorias ? " e " : ""}
-                {sinCategorias ? "categorias" : ""} atribuídos. Peça ao administrador.
+                Sua conta ainda não tem cartões, categorias e/ou centro de custo
+                atribuídos. Peça ao administrador.
               </div>
             ) : (
               <p className="note" style={{ marginTop: 4 }}>
@@ -319,7 +334,7 @@ export default function ConductorApp({
             <button
               className="btn btn-primary btn-block"
               style={{ marginTop: 12 }}
-              disabled={sinTarjetas || sinCategorias}
+              disabled={faltaAtribuir}
               onClick={() => camRef.current?.click()}
             >
               📷 Tirar foto
@@ -327,7 +342,7 @@ export default function ConductorApp({
             <button
               className="btn btn-light btn-block"
               style={{ marginTop: 10 }}
-              disabled={sinTarjetas || sinCategorias}
+              disabled={faltaAtribuir}
               onClick={() => galRef.current?.click()}
             >
               🖼️ Carregar da galeria
@@ -335,7 +350,7 @@ export default function ConductorApp({
             <button
               className="btn btn-light btn-block"
               style={{ marginTop: 10 }}
-              disabled={sinTarjetas || sinCategorias}
+              disabled={faltaAtribuir}
               onClick={() => pdfRef.current?.click()}
             >
               📄 Carregar PDF
@@ -397,6 +412,21 @@ export default function ConductorApp({
                   onChange={(e) => actualizar("data_documento", e.target.value)}
                 />
               </div>
+            </div>
+
+            <div className="field">
+              <label>Centro de custo *</label>
+              <select
+                value={borrador.centro_custo}
+                onChange={(e) => actualizar("centro_custo", e.target.value)}
+              >
+                <option value="">— Selecione —</option>
+                {centros.map((c) => (
+                  <option key={c.id} value={c.nome}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="field">
@@ -480,6 +510,20 @@ export default function ConductorApp({
                 ))}
               </select>
             </div>
+            <div className="field">
+              <label>Centro de custo</label>
+              <select
+                value={filtroCentro}
+                onChange={(e) => setFiltroCentro(e.target.value)}
+              >
+                <option value="todos">Todos</option>
+                {centros.map((c) => (
+                  <option key={c.id} value={c.nome}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <p className="note">
@@ -499,8 +543,8 @@ export default function ConductorApp({
                   </div>
                   <div className="meta">
                     <span className="codigo">{codigoId(ev.id)}</span>{" "}
-                    {ev.data_documento || "sem data"} · {ev.categoria || "—"} ·{" "}
-                    {ev.ultimos4 ? `••${ev.ultimos4}` : "—"}
+                    {ev.data_documento || "sem data"} · {ev.centro_custo || "—"} ·{" "}
+                    {ev.categoria || "—"} · {ev.ultimos4 ? `••${ev.ultimos4}` : "—"}
                   </div>
                   <div className="row" style={{ marginTop: 8 }}>
                     <span className="spacer" />

@@ -81,9 +81,9 @@ export async function POST(req: Request) {
     return Response.json({ error: error.message }, { status: 400 });
   }
 
-  // El trigger crea el perfil como 'conductor'. Si se pidió admin, lo actualizamos.
-  if (role === "admin" && data.user) {
-    await admin.from("profiles").update({ role: "admin" }).eq("id", data.user.id);
+  // El trigger crea el perfil como 'conductor'. Si se pidió otro rol, lo actualizamos.
+  if ((role === "admin" || role === "supervisor") && data.user) {
+    await admin.from("profiles").update({ role }).eq("id", data.user.id);
   }
 
   return Response.json({ ok: true });
@@ -111,7 +111,7 @@ export async function PATCH(req: Request) {
     if (error) return Response.json({ error: error.message }, { status: 400 });
   }
 
-  if (role === "admin" || role === "conductor") {
+  if (role === "admin" || role === "conductor" || role === "supervisor") {
     await admin.from("profiles").update({ role }).eq("id", id);
   }
 

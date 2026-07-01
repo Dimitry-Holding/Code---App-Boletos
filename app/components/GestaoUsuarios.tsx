@@ -4,15 +4,21 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import { emailParaUsuario } from "@/lib/auth";
-import { type Cartao, type Categoria, labelCartao } from "@/lib/evento";
+import {
+  type Cartao,
+  type Categoria,
+  type CentroCusto,
+  labelCartao,
+} from "@/lib/evento";
 import TopBar from "./TopBar";
 
-type Usuario = {
-  id: string;
-  email: string;
-  nome: string;
-  role: string;
-};
+type Usuario = { id: string; email: string; nome: string; role: string };
+
+function badgeRole(role: string) {
+  if (role === "admin") return { cls: "media", txt: "Administrador" };
+  if (role === "supervisor") return { cls: "baixa", txt: "Semi-admin" };
+  return { cls: "alta", txt: "Usuário" };
+}
 
 export default function GestaoUsuarios({ nome }: { nome: string }) {
   const supabase = useMemo(() => createClient(), []);
@@ -29,12 +35,17 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
   const [creando, setCreando] = useState(false);
 
   // detalle expandido
-  const [expandido, setExpandido] = useState<string | null>(null);
+  const [expandido, setExpandido] = useState<Usuario | null>(null);
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [centros, setCentros] = useState<CentroCusto[]>([]);
+  const [escopo, setEscopo] = useState<Set<string>>(new Set());
   const [apelido, setApelido] = useState("");
   const [last4, setLast4] = useState("");
   const [catBulk, setCatBulk] = useState("");
+  const [centroBulk, setCentroBulk] = useState("");
+
+  const conductores = usuarios.filter((u) => u.role === "conductor");
 
   async function cargarUsuarios() {
     const r = await fetch("/api/admin/users");
@@ -89,27 +100,39 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
   }
 
   async function expandir(u: Usuario) {
-    if (expandido === u.id) {
+    if (expandido?.id === u.id) {
       setExpandido(null);
       return;
     }
-    setExpandido(u.id);
+    setExpandido(u);
     setApelido("");
     setLast4("");
     setCatBulk("");
-    await cargarDetalle(u.id);
+    setCentroBulk("");
+    await cargarDetalle(u);
   }
 
-  async function cargarDetalle(userId: string) {
-    const [{ data: cs }, { data: cats }] = await Promise.all([
-      supabase.from("cartoes").select("*").eq("user_id", userId).order("apelido"),
-      supabase.from("categorias").select("*").eq("user_id", userId).order("nome"),
+  async function cargarDetalle(u: Usuario) {
+    if (u.role === "supervisor") {
+      const { data } = await supabase
+        .from("supervisor_escopo")
+        .select("user_id")
+        .eq("supervisor_id", u.id);
+      setEscopo(new Set((data ?? []).map((r: { user_id: string }) => r.user_id)));
+      return;
+    }
+    const [{ data: cs }, { data: cats }, { data: ccs }] = await Promise.all([
+      supabase.from("cartoes").select("*").eq("user_id", u.id).order("apelido"),
+      supabase.from("categorias").select("*").eq("user_id", u.id).order("nome"),
+      supabase.from("centros_custo").select("*").eq("user_id", u.id).order("nome"),
     ]);
     setCartoes((cs as Cartao[]) ?? []);
     setCategorias((cats as Categoria[]) ?? []);
+    setCentros((ccs as CentroCusto[]) ?? []);
   }
 
-  async function addCartao(userId: string) {
+  // --- Tarjetas ---
+  async function addCartao(u: Usuario) {
     const dig = last4.replace(/\D/g, "").slice(-4);
     if (dig.length < 4) {
       setErro("Os últimos 4 dígitos devem ter 4 números.");
@@ -117,40 +140,46 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
     }
     const { error } = await supabase
       .from("cartoes")
-      .insert({ user_id: userId, ultimos4: dig, apelido: apelido.trim() || null });
-    if (error) {
-      setErro("Erro ao adicionar cartão: " + error.message);
-      return;
-    }
+      .insert({ user_id: u.id, ultimos4: dig, apelido: apelido.trim() || null });
+    if (error) return setErro("Erro ao adicionar cartão: " + error.message);
     setApelido("");
     setLast4("");
-    await cargarDetalle(userId);
+    await cargarDetalle(u);
   }
-
-  async function removeCartao(userId: string, id: number) {
+  async function removeCartao(u: Usuario, id: number) {
     await supabase.from("cartoes").delete().eq("id", id);
-    await cargarDetalle(userId);
+    await cargarDetalle(u);
   }
 
-  async function addCategoriasBulk(userId: string) {
-    const nomes = catBulk
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  // --- Categorías / Centros (bulk, uno por línea) ---
+  async function addBulk(u: Usuario, tabla: string, texto: string, limpiar: () => void) {
+    const nomes = texto.split("\n").map((s) => s.trim()).filter(Boolean);
     if (nomes.length === 0) return;
-    const filas = nomes.map((n) => ({ user_id: userId, nome: n }));
-    const { error } = await supabase.from("categorias").insert(filas);
-    if (error) {
-      setErro("Erro ao adicionar categorias: " + error.message);
-      return;
-    }
-    setCatBulk("");
-    await cargarDetalle(userId);
+    const filas = nomes.map((n) => ({ user_id: u.id, nome: n }));
+    const { error } = await supabase.from(tabla).insert(filas);
+    if (error) return setErro(`Erro ao adicionar em ${tabla}: ` + error.message);
+    limpiar();
+    await cargarDetalle(u);
+  }
+  async function removeItem(u: Usuario, tabla: string, id: number) {
+    await supabase.from(tabla).delete().eq("id", id);
+    await cargarDetalle(u);
   }
 
-  async function removeCategoria(userId: string, id: number) {
-    await supabase.from("categorias").delete().eq("id", id);
-    await cargarDetalle(userId);
+  // --- Alcance del semi-admin ---
+  async function toggleEscopo(sup: Usuario, condId: string) {
+    if (escopo.has(condId)) {
+      await supabase
+        .from("supervisor_escopo")
+        .delete()
+        .eq("supervisor_id", sup.id)
+        .eq("user_id", condId);
+    } else {
+      await supabase
+        .from("supervisor_escopo")
+        .insert({ supervisor_id: sup.id, user_id: condId });
+    }
+    await cargarDetalle(sup);
   }
 
   return (
@@ -190,6 +219,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
               <label>Tipo</label>
               <select value={fRole} onChange={(e) => setFRole(e.target.value)}>
                 <option value="conductor">Usuário</option>
+                <option value="supervisor">Semi-admin (só leitura de certos usuários)</option>
                 <option value="admin">Administrador</option>
               </select>
             </div>
@@ -216,89 +246,140 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
           {cargando ? (
             <div className="status"><div className="spinner" /></div>
           ) : (
-            usuarios.map((u) => (
-              <div key={u.id} className="evento">
-                <div className="top">
-                  <span className="fornecedor">{u.nome || "(sem nome)"}</span>
-                  <span className={`badge ${u.role === "admin" ? "media" : "alta"}`}>
-                    {u.role === "admin" ? "Administrador" : "Usuário"}
-                  </span>
-                </div>
-                <div className="meta">{emailParaUsuario(u.email)}</div>
-                <div className="row" style={{ marginTop: 8 }}>
-                  {u.role !== "admin" && (
-                    <button className="btn-ghost" onClick={() => expandir(u)}>
-                      💳 Cartões e categorias
-                    </button>
-                  )}
-                  <span className="spacer" />
-                  <button className="btn-ghost" onClick={() => resetarSenha(u)}>
-                    🔑 Senha
-                  </button>
-                </div>
-
-                {expandido === u.id && (
-                  <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
-                    {/* TARJETAS */}
-                    <strong style={{ fontSize: 14 }}>Cartões</strong>
-                    {cartoes.length === 0 ? (
-                      <p className="note">Nenhum cartão.</p>
-                    ) : (
-                      <div style={{ marginTop: 6 }}>
-                        {cartoes.map((c) => (
-                          <div key={c.id} className="row" style={{ padding: "4px 0" }}>
-                            <span>{labelCartao(c)}</span>
-                            <span className="spacer" />
-                            <button className="btn-ghost" onClick={() => removeCartao(u.id, c.id)}>✕</button>
-                          </div>
-                        ))}
-                      </div>
+            usuarios.map((u) => {
+              const b = badgeRole(u.role);
+              const aberto = expandido?.id === u.id;
+              return (
+                <div key={u.id} className="evento">
+                  <div className="top">
+                    <span className="fornecedor">{u.nome || "(sem nome)"}</span>
+                    <span className={`badge ${b.cls}`}>{b.txt}</span>
+                  </div>
+                  <div className="meta">{emailParaUsuario(u.email)}</div>
+                  <div className="row" style={{ marginTop: 8 }}>
+                    {u.role === "conductor" && (
+                      <button className="btn-ghost" onClick={() => expandir(u)}>
+                        💳 Cartões, categorias e centros
+                      </button>
                     )}
-                    <div className="grid-2" style={{ marginTop: 6 }}>
-                      <div className="field" style={{ marginTop: 0 }}>
-                        <label>Apelido</label>
-                        <input placeholder="ex: Santander" value={apelido} onChange={(e) => setApelido(e.target.value)} />
-                      </div>
-                      <div className="field" style={{ marginTop: 0 }}>
-                        <label>Últimos 4</label>
-                        <input inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value)} />
-                      </div>
-                    </div>
-                    <button className="btn btn-light btn-block" style={{ marginTop: 8 }} onClick={() => addCartao(u.id)}>
-                      + Adicionar cartão
-                    </button>
-
-                    {/* CATEGORIAS */}
-                    <strong style={{ fontSize: 14, display: "block", marginTop: 16 }}>Categorias</strong>
-                    {categorias.length === 0 ? (
-                      <p className="note">Nenhuma categoria.</p>
-                    ) : (
-                      <div style={{ marginTop: 6 }}>
-                        {categorias.map((c) => (
-                          <div key={c.id} className="row" style={{ padding: "4px 0" }}>
-                            <span>{c.nome}</span>
-                            <span className="spacer" />
-                            <button className="btn-ghost" onClick={() => removeCategoria(u.id, c.id)}>✕</button>
-                          </div>
-                        ))}
-                      </div>
+                    {u.role === "supervisor" && (
+                      <button className="btn-ghost" onClick={() => expandir(u)}>
+                        👁️ Usuários que vê
+                      </button>
                     )}
-                    <div className="field" style={{ marginTop: 6 }}>
-                      <label>Adicionar categorias (uma por linha)</label>
-                      <textarea
-                        rows={3}
-                        placeholder={"Combustiveis e Lubrificantes\nHospedagem\n..."}
-                        value={catBulk}
-                        onChange={(e) => setCatBulk(e.target.value)}
-                      />
-                    </div>
-                    <button className="btn btn-light btn-block" onClick={() => addCategoriasBulk(u.id)}>
-                      + Adicionar categorias
+                    <span className="spacer" />
+                    <button className="btn-ghost" onClick={() => resetarSenha(u)}>
+                      🔑 Senha
                     </button>
                   </div>
-                )}
-              </div>
-            ))
+
+                  {aberto && u.role === "conductor" && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
+                      {/* CARTÕES */}
+                      <strong style={{ fontSize: 14 }}>Cartões</strong>
+                      {cartoes.length === 0 ? (
+                        <p className="note">Nenhum cartão.</p>
+                      ) : (
+                        <div style={{ marginTop: 6 }}>
+                          {cartoes.map((c) => (
+                            <div key={c.id} className="row" style={{ padding: "4px 0" }}>
+                              <span>{labelCartao(c)}</span>
+                              <span className="spacer" />
+                              <button className="btn-ghost" onClick={() => removeCartao(u, c.id)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="grid-2" style={{ marginTop: 6 }}>
+                        <div className="field" style={{ marginTop: 0 }}>
+                          <label>Apelido</label>
+                          <input placeholder="ex: Santander" value={apelido} onChange={(e) => setApelido(e.target.value)} />
+                        </div>
+                        <div className="field" style={{ marginTop: 0 }}>
+                          <label>Últimos 4</label>
+                          <input inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value)} />
+                        </div>
+                      </div>
+                      <button className="btn btn-light btn-block" style={{ marginTop: 8 }} onClick={() => addCartao(u)}>
+                        + Adicionar cartão
+                      </button>
+
+                      {/* CENTROS DE CUSTO */}
+                      <strong style={{ fontSize: 14, display: "block", marginTop: 16 }}>Centros de custo</strong>
+                      {centros.length === 0 ? (
+                        <p className="note">Nenhum centro de custo.</p>
+                      ) : (
+                        <div style={{ marginTop: 6 }}>
+                          {centros.map((c) => (
+                            <div key={c.id} className="row" style={{ padding: "4px 0" }}>
+                              <span>{c.nome}</span>
+                              <span className="spacer" />
+                              <button className="btn-ghost" onClick={() => removeItem(u, "centros_custo", c.id)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="field" style={{ marginTop: 6 }}>
+                        <label>Adicionar centros (um por linha)</label>
+                        <textarea rows={2} placeholder={"Aeronave\nEscritório\n..."} value={centroBulk} onChange={(e) => setCentroBulk(e.target.value)} />
+                      </div>
+                      <button className="btn btn-light btn-block" onClick={() => addBulk(u, "centros_custo", centroBulk, () => setCentroBulk(""))}>
+                        + Adicionar centros
+                      </button>
+
+                      {/* CATEGORIAS */}
+                      <strong style={{ fontSize: 14, display: "block", marginTop: 16 }}>Categorias</strong>
+                      {categorias.length === 0 ? (
+                        <p className="note">Nenhuma categoria.</p>
+                      ) : (
+                        <div style={{ marginTop: 6 }}>
+                          {categorias.map((c) => (
+                            <div key={c.id} className="row" style={{ padding: "4px 0" }}>
+                              <span>{c.nome}</span>
+                              <span className="spacer" />
+                              <button className="btn-ghost" onClick={() => removeItem(u, "categorias", c.id)}>✕</button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      <div className="field" style={{ marginTop: 6 }}>
+                        <label>Adicionar categorias (uma por linha)</label>
+                        <textarea rows={3} placeholder={"Combustiveis e Lubrificantes\nHospedagem\n..."} value={catBulk} onChange={(e) => setCatBulk(e.target.value)} />
+                      </div>
+                      <button className="btn btn-light btn-block" onClick={() => addBulk(u, "categorias", catBulk, () => setCatBulk(""))}>
+                        + Adicionar categorias
+                      </button>
+                    </div>
+                  )}
+
+                  {aberto && u.role === "supervisor" && (
+                    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px dashed var(--border)" }}>
+                      <strong style={{ fontSize: 14 }}>Quais usuários pode ver</strong>
+                      <p className="note" style={{ marginTop: 2 }}>
+                        Marque os usuários cujos gastos este semi-admin poderá consultar.
+                      </p>
+                      {conductores.length === 0 ? (
+                        <p className="note">Não há usuários para atribuir.</p>
+                      ) : (
+                        <div style={{ marginTop: 6 }}>
+                          {conductores.map((c) => (
+                            <label key={c.id} className="row" style={{ padding: "6px 0", cursor: "pointer" }}>
+                              <input
+                                type="checkbox"
+                                checked={escopo.has(c.id)}
+                                onChange={() => toggleEscopo(u, c.id)}
+                                style={{ width: 18, height: 18, marginRight: 8 }}
+                              />
+                              <span>{c.nome} <span className="note" style={{ margin: 0 }}>({emailParaUsuario(c.email)})</span></span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })
           )}
         </div>
       </main>

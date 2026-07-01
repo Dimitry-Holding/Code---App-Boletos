@@ -25,7 +25,13 @@ function isoPrimeiroDiaMes() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
 
-export default function AdminApp({ nome }: { nome: string }) {
+export default function AdminApp({
+  nome,
+  podeGerenciar = true,
+}: {
+  nome: string;
+  podeGerenciar?: boolean;
+}) {
   const supabase = useMemo(() => createClient(), []);
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [perfiles, setPerfiles] = useState<Record<string, string>>({});
@@ -35,6 +41,7 @@ export default function AdminApp({ nome }: { nome: string }) {
   const [fim, setFim] = useState(isoHoje());
   const [usuario, setUsuario] = useState("todos");
   const [tdc, setTdc] = useState("todos");
+  const [centro, setCentro] = useState("todos");
   const [baixando, setBaixando] = useState<string | null>(null);
 
   useEffect(() => {
@@ -64,12 +71,21 @@ export default function AdminApp({ nome }: { nome: string }) {
     [eventos],
   );
 
+  const centrosEnDatos = useMemo(
+    () =>
+      Array.from(
+        new Set(eventos.map((e) => e.centro_custo).filter((x): x is string => !!x)),
+      ).sort(),
+    [eventos],
+  );
+
   const filtrados = eventos.filter((e) => {
     const dia = (e.data_documento || e.criado_em || "").slice(0, 10);
     if (inicio && dia < inicio) return false;
     if (fim && dia > fim) return false;
     if (usuario !== "todos" && e.conductor_id !== usuario) return false;
     if (tdc !== "todos" && (e.ultimos4 || "") !== tdc) return false;
+    if (centro !== "todos" && (e.centro_custo || "") !== centro) return false;
     return true;
   });
 
@@ -167,15 +183,17 @@ export default function AdminApp({ nome }: { nome: string }) {
 
   return (
     <>
-      <TopBar nome={nome} papel="Administrador" />
+      <TopBar nome={nome} papel={podeGerenciar ? "Administrador" : "Supervisor"} />
       <main className="wrap">
         <div className="section-title">
           <span>Notas fiscais</span>
           <span className="count">{filtrados.length}</span>
           <span className="spacer" />
-          <Link href="/usuarios" className="btn btn-light">
-            👥 Usuários
-          </Link>
+          {podeGerenciar && (
+            <Link href="/usuarios" className="btn btn-light">
+              👥 Usuários
+            </Link>
+          )}
           <button
             className="btn btn-light"
             onClick={baixarTodas}
@@ -232,6 +250,17 @@ export default function AdminApp({ nome }: { nome: string }) {
                 ))}
               </select>
             </div>
+            <div className="field">
+              <label>Centro de custo</label>
+              <select value={centro} onChange={(e) => setCentro(e.target.value)}>
+                <option value="todos">Todos</option>
+                {centrosEnDatos.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
           <p className="note">
@@ -255,6 +284,7 @@ export default function AdminApp({ nome }: { nome: string }) {
                     <th>Data</th>
                     <th>Fornecedor</th>
                     <th>Valor</th>
+                    <th>Centro de custo</th>
                     <th>Categoria</th>
                     <th>Pagamento</th>
                     <th>Cartão</th>
@@ -269,6 +299,7 @@ export default function AdminApp({ nome }: { nome: string }) {
                       <td>{e.data_documento || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>
                       <td className="num">{Number(e.valor ?? 0).toFixed(2)}</td>
+                      <td>{e.centro_custo || "—"}</td>
                       <td>{e.categoria || "—"}</td>
                       <td>
                         {TIPO_PAGAMENTO_LABEL[e.tipo_pagamento ?? ""] ?? "—"}
@@ -283,9 +314,11 @@ export default function AdminApp({ nome }: { nome: string }) {
                           <button className="btn-ghost" onClick={() => baixarFoto(e)}>
                             ⬇️
                           </button>
-                          <button className="btn-danger-ghost" onClick={() => eliminar(e)}>
-                            🗑️
-                          </button>
+                          {podeGerenciar && (
+                            <button className="btn-danger-ghost" onClick={() => eliminar(e)}>
+                              🗑️
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

@@ -21,7 +21,11 @@ export default async function Home() {
   const role = perfil?.role ?? "conductor";
 
   if (role === "admin") {
-    return <AdminApp nome={nome} />;
+    return <AdminApp nome={nome} podeGerenciar={true} />;
+  }
+
+  if (role === "supervisor") {
+    return <AdminApp nome={nome} podeGerenciar={false} />;
   }
 
   return <ConductorApp nome={nome} userId={user.id} />;
