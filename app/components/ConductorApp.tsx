@@ -56,6 +56,7 @@ export default function ConductorApp({
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [centros, setCentros] = useState<CentroCusto[]>([]);
   const [filtroCentro, setFiltroCentro] = useState("todos");
+  const [filtroCategoria, setFiltroCategoria] = useState("todos");
   const [editId, setEditId] = useState<number | null>(null);
   const [fotoEditUrl, setFotoEditUrl] = useState<string | null>(null);
 
@@ -90,6 +91,8 @@ export default function ConductorApp({
     const d = new Date(e.data_documento || e.criado_em);
     if (d.getFullYear() !== ano || d.getMonth() + 1 !== mes) return false;
     if (filtroCentro !== "todos" && (e.centro_custo || "") !== filtroCentro)
+      return false;
+    if (filtroCategoria !== "todos" && (e.categoria || "") !== filtroCategoria)
       return false;
     return true;
   });
@@ -518,6 +521,20 @@ export default function ConductorApp({
               >
                 <option value="todos">Todos</option>
                 {centros.map((c) => (
+                  <option key={c.id} value={c.nome}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label>Categoria</label>
+              <select
+                value={filtroCategoria}
+                onChange={(e) => setFiltroCategoria(e.target.value)}
+              >
+                <option value="todos">Todas</option>
+                {categorias.map((c) => (
                   <option key={c.id} value={c.nome}>
                     {c.nome}
                   </option>

@@ -42,6 +42,7 @@ export default function AdminApp({
   const [usuario, setUsuario] = useState("todos");
   const [tdc, setTdc] = useState("todos");
   const [centro, setCentro] = useState("todos");
+  const [categoria, setCategoria] = useState("todos");
   const [baixando, setBaixando] = useState<string | null>(null);
 
   useEffect(() => {
@@ -79,6 +80,14 @@ export default function AdminApp({
     [eventos],
   );
 
+  const categoriasEnDatos = useMemo(
+    () =>
+      Array.from(
+        new Set(eventos.map((e) => e.categoria).filter((x): x is string => !!x)),
+      ).sort(),
+    [eventos],
+  );
+
   const filtrados = eventos.filter((e) => {
     const dia = (e.data_documento || e.criado_em || "").slice(0, 10);
     if (inicio && dia < inicio) return false;
@@ -86,6 +95,7 @@ export default function AdminApp({
     if (usuario !== "todos" && e.conductor_id !== usuario) return false;
     if (tdc !== "todos" && (e.ultimos4 || "") !== tdc) return false;
     if (centro !== "todos" && (e.centro_custo || "") !== centro) return false;
+    if (categoria !== "todos" && (e.categoria || "") !== categoria) return false;
     return true;
   });
 
@@ -261,11 +271,27 @@ export default function AdminApp({
                 ))}
               </select>
             </div>
+            <div className="field">
+              <label>Categoria</label>
+              <select value={categoria} onChange={(e) => setCategoria(e.target.value)}>
+                <option value="todos">Todas</option>
+                {categoriasEnDatos.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          <p className="note">
-            Período: <strong>{inicio || "—"}</strong> a <strong>{fim || "—"}</strong> ·
-            Total: <strong>R$ {total.toFixed(2)}</strong>
+          <p className="note" style={{ marginBottom: 2 }}>
+            Período: <strong>{inicio || "—"}</strong> a <strong>{fim || "—"}</strong>
+          </p>
+          <p style={{ fontSize: 16, fontWeight: 700, color: "var(--primary)", margin: "2px 0 6px" }}>
+            Subtotal: R$ {total.toFixed(2)}{" "}
+            <span className="note" style={{ margin: 0, fontWeight: 400 }}>
+              ({filtrados.length} nota{filtrados.length === 1 ? "" : "s"})
+            </span>
           </p>
 
           {cargando ? (
