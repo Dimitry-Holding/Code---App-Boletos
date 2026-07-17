@@ -5,7 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODELO = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const MODELO = process.env.GEMINI_MODEL || "gemini-flash-latest";
 const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`;
 
 const TIPOS_PAGO = ["debito", "credito"];
