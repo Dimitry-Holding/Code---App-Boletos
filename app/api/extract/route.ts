@@ -1,4 +1,6 @@
 import { type Extraccion } from "@/lib/evento";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -49,6 +51,7 @@ Não invente dados: se um campo não estiver visível, deixe vazio ("") ou 0.`;
 
 type CuerpoSolicitud = {
   imageBase64?: string;
+  storagePath?: string;
   mediaType?: string;
   categorias?: string[];
 };
@@ -69,13 +72,49 @@ export async function POST(req: Request) {
     return Response.json({ error: "Cuerpo inválido." }, { status: 400 });
   }
 
-  const { imageBase64, mediaType } = cuerpo;
+  const { imageBase64, storagePath, mediaType } = cuerpo;
   const categorias = Array.isArray(cuerpo.categorias) ? cuerpo.categorias : [];
-  if (!imageBase64 || !mediaType) {
+  if (!mediaType || (!imageBase64 && !storagePath)) {
     return Response.json(
-      { error: "Falta la imagen o el tipo de archivo." },
+      { error: "Falta el archivo o el tipo." },
       { status: 400 },
     );
+  }
+
+  // Los datos a enviar a Gemini: si viene por Storage (PDFs grandes), el servidor
+  // descarga el archivo desde ahí (esquiva el límite de tamaño de Vercel).
+  let datosBase64: string;
+  try {
+    if (storagePath) {
+      const supa = await createClient();
+      const {
+        data: { user },
+      } = await supa.auth.getUser();
+      if (!user) {
+        return Response.json({ error: "Não autenticado." }, { status: 401 });
+      }
+      // Solo se puede leer un archivo de la propia carpeta del usuario.
+      if (!storagePath.startsWith(`${user.id}/`)) {
+        return Response.json({ error: "Sem permissão." }, { status: 403 });
+      }
+      const admin = createAdminClient();
+      const { data: arquivo, error } = await admin.storage
+        .from("notas")
+        .download(storagePath);
+      if (error || !arquivo) {
+        return Response.json(
+          { error: "Não foi possível ler o arquivo do Storage." },
+          { status: 502 },
+        );
+      }
+      const buf = Buffer.from(await arquivo.arrayBuffer());
+      datosBase64 = buf.toString("base64");
+    } else {
+      datosBase64 = imageBase64 as string;
+    }
+  } catch (err) {
+    const m = err instanceof Error ? err.message : "erro";
+    return Response.json({ error: `Erro ao ler o arquivo: ${m}` }, { status: 502 });
   }
 
   try {
@@ -85,7 +124,7 @@ export async function POST(req: Request) {
         {
           role: "user",
           parts: [
-            { inline_data: { mime_type: mediaType, data: imageBase64 } },
+            { inline_data: { mime_type: mediaType, data: datosBase64 } },
             { text: "Extraia os dados deste documento fiscal e devolva apenas o JSON." },
           ],
         },

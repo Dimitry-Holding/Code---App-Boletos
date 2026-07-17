@@ -16,9 +16,14 @@ import TopBar from "./TopBar";
 
 type Estado = "inicio" | "procesando" | "revision" | "edicion";
 type Borrador = Extraccion & { centro_custo: string };
-type Captura = { dataUrl: string; mediaType: string; esPdf: boolean };
+type Captura = {
+  dataUrl: string;
+  mediaType: string;
+  esPdf: boolean;
+  storagePath?: string; // PDFs: ya subidos a Storage antes de extraer
+};
 
-const MAX_PDF_BYTES = 3 * 1024 * 1024;
+const MAX_PDF_BYTES = 12 * 1024 * 1024;
 
 const MESES = [
   "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
@@ -134,28 +139,50 @@ export default function ConductorApp({
     setError(null);
     setEditId(null);
     setEstado("procesando");
+    const previo = captura?.storagePath;
+    let subido: string | null = null;
     try {
       let cap: Captura;
       if (file.type === "application/pdf") {
         if (file.size > MAX_PDF_BYTES) {
-          throw new Error("PDF muito grande (máx. 3 MB). Tente uma foto ou um PDF menor.");
+          throw new Error("PDF muito grande (máx. 12 MB). Tente um PDF menor.");
         }
-        cap = { dataUrl: await leerComoDataUrl(file), mediaType: "application/pdf", esPdf: true };
+        cap = { dataUrl: "", mediaType: "application/pdf", esPdf: true };
       } else if (file.type.startsWith("image/")) {
         cap = { dataUrl: await redimensionar(file), mediaType: "image/jpeg", esPdf: false };
       } else {
         throw new Error("Formato não suportado. Use foto ou PDF.");
       }
+      // PDF: sube a Storage y extrae desde ahi (evita el limite de tamano de Vercel).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let extractBody: any;
+      if (cap.esPdf) {
+        const path = `${userId}/${crypto.randomUUID()}.pdf`;
+        const up = await supabase.storage
+          .from("notas")
+          .upload(path, file, { contentType: "application/pdf" });
+        if (up.error) throw up.error;
+        subido = path;
+        cap = { ...cap, storagePath: path };
+        extractBody = {
+          storagePath: path,
+          mediaType: "application/pdf",
+          categorias: categorias.map((c) => c.nome),
+        };
+      } else {
+        extractBody = {
+          imageBase64: cap.dataUrl.split(",")[1],
+          mediaType: cap.mediaType,
+          categorias: categorias.map((c) => c.nome),
+        };
+      }
       setCaptura(cap);
+      if (previo) supabase.storage.from("notas").remove([previo]);
 
       const resp = await fetch("/api/extract", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          imageBase64: cap.dataUrl.split(",")[1],
-          mediaType: cap.mediaType,
-          categorias: categorias.map((c) => c.nome),
-        }),
+        body: JSON.stringify(extractBody),
       });
       const data = (await resp.json()) as Extraccion & { error?: string };
       if (!resp.ok) throw new Error(data.error || "Erro ao processar.");
@@ -170,11 +197,13 @@ export default function ConductorApp({
         // Centro de custo: por defecto el único (o vacío si tiene varios).
         centro_custo: centros.length === 1 ? centros[0].nome : "",
       });
+      subido = null; // éxito: el PDF queda como captura para guardar
       setEstado("revision");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro desconhecido.");
       setEstado("inicio");
       setCaptura(null);
+      if (subido) await supabase.storage.from("notas").remove([subido]);
     }
   }
 
@@ -199,13 +228,17 @@ export default function ConductorApp({
     setGuardando(true);
     setError(null);
     try {
-      const ext = captura.esPdf ? "pdf" : "jpg";
-      const path = `${userId}/${crypto.randomUUID()}.${ext}`;
-      const blob = await (await fetch(captura.dataUrl)).blob();
-      const up = await supabase.storage
-        .from("notas")
-        .upload(path, blob, { contentType: captura.mediaType });
-      if (up.error) throw up.error;
+      let path: string;
+      if (captura.storagePath) {
+        path = captura.storagePath; // PDF ya subido durante la extracción
+      } else {
+        path = `${userId}/${crypto.randomUUID()}.jpg`;
+        const blob = await (await fetch(captura.dataUrl)).blob();
+        const up = await supabase.storage
+          .from("notas")
+          .upload(path, blob, { contentType: captura.mediaType });
+        if (up.error) throw up.error;
+      }
 
       const ins = await supabase.from("eventos").insert({
         conductor_id: userId,
@@ -224,7 +257,7 @@ export default function ConductorApp({
       if (ins.error) throw ins.error;
 
       await cargarTodo();
-      cancelar();
+      limparEstado(); // NO borrar el archivo recién guardado
     } catch (e) {
       setError("Erro ao salvar: " + (e instanceof Error ? e.message : ""));
     } finally {
@@ -294,13 +327,21 @@ export default function ConductorApp({
     }
   }
 
-  function cancelar() {
+  function limparEstado() {
     setEstado("inicio");
     setCaptura(null);
     setBorrador(BORRADOR_VACIO);
     setEditId(null);
     setFotoEditUrl(null);
     setError(null);
+  }
+
+  async function cancelar() {
+    // Si había un PDF subido y no se guardó, lo borramos (no dejar huérfanos).
+    if (captura?.storagePath) {
+      await supabase.storage.from("notas").remove([captura.storagePath]);
+    }
+    limparEstado();
   }
 
   async function eliminar(ev: Evento) {
@@ -645,15 +686,6 @@ export default function ConductorApp({
       </main>
     </>
   );
-}
-
-function leerComoDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = () => reject(new Error("Não foi possível ler o arquivo."));
-    reader.readAsDataURL(file);
-  });
 }
 
 async function redimensionar(file: File, maxDim = 1600, calidad = 0.8): Promise<string> {
