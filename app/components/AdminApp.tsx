@@ -43,7 +43,10 @@ export default function AdminApp({
   const [tdc, setTdc] = useState("todos");
   const [centro, setCentro] = useState("todos");
   const [categoria, setCategoria] = useState("todos");
+  const [busca, setBusca] = useState("");
   const [baixando, setBaixando] = useState<string | null>(null);
+  const [ordem, setOrdem] = useState<{ col: string; dir: 1 | -1 } | null>(null);
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -96,10 +99,82 @@ export default function AdminApp({
     if (tdc !== "todos" && (e.ultimos4 || "") !== tdc) return false;
     if (centro !== "todos" && (e.centro_custo || "") !== centro) return false;
     if (categoria !== "todos" && (e.categoria || "") !== categoria) return false;
+    if (busca.trim()) {
+      const q = busca.trim().toLowerCase();
+      const forn = (e.fornecedor || "").toLowerCase();
+      const val = String(e.valor ?? "");
+      if (!forn.includes(q) && !val.includes(q)) return false;
+    }
     return true;
   });
 
   const total = filtrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+
+  // --- Ordenar por columna ---
+  function valorOrden(e: Evento, col: string): string | number {
+    switch (col) {
+      case "id": return e.id;
+      case "valor": return Number(e.valor ?? 0);
+      case "data": return e.data_documento || "";
+      case "fornecedor": return (e.fornecedor || "").toLowerCase();
+      case "centro": return (e.centro_custo || "").toLowerCase();
+      case "categoria": return (e.categoria || "").toLowerCase();
+      case "pagamento": return e.tipo_pagamento || "";
+      case "cartao": return e.ultimos4 || "";
+      case "usuario": return (perfiles[e.conductor_id] || "").toLowerCase();
+      default: return "";
+    }
+  }
+  const ordenados = ordem
+    ? [...filtrados].sort((a, b) => {
+        const va = valorOrden(a, ordem.col);
+        const vb = valorOrden(b, ordem.col);
+        if (va < vb) return -ordem.dir;
+        if (va > vb) return ordem.dir;
+        return 0;
+      })
+    : filtrados;
+  function ordenarPor(col: string) {
+    setOrdem((o) =>
+      o && o.col === col
+        ? { col, dir: (o.dir === 1 ? -1 : 1) as 1 | -1 }
+        : { col, dir: 1 },
+    );
+  }
+  function renderTh(col: string, label: string) {
+    const activo = ordem?.col === col;
+    return (
+      <th
+        onClick={() => ordenarPor(col)}
+        style={{ cursor: "pointer", whiteSpace: "nowrap", userSelect: "none" }}
+      >
+        {label}
+        {activo ? (ordem?.dir === 1 ? " ▲" : " ▼") : " ↕"}
+      </th>
+    );
+  }
+
+  // --- Selección de filas ---
+  const selecionadasList = filtrados.filter((e) => selecionados.has(e.id));
+  const idsVisiveis = filtrados.map((e) => e.id);
+  const todasSel =
+    idsVisiveis.length > 0 && idsVisiveis.every((id) => selecionados.has(id));
+  function toggleSel(id: number) {
+    setSelecionados((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+  }
+  function toggleTodas() {
+    setSelecionados((s) => {
+      const n = new Set(s);
+      if (todasSel) idsVisiveis.forEach((id) => n.delete(id));
+      else idsVisiveis.forEach((id) => n.add(id));
+      return n;
+    });
+  }
 
   function exportarExcel() {
     if (filtrados.length === 0) return;
@@ -149,17 +224,17 @@ export default function AdminApp({
     descargarBlob(data, nomeArquivoFoto(ev));
   }
 
-  /** Descarga TODAS las fotos del período filtrado en un único ZIP. */
-  async function baixarTodas() {
-    if (filtrados.length === 0) return;
-    setBaixando(`0/${filtrados.length}`);
+  /** Descarga en un único ZIP las fotos de la lista indicada. */
+  async function baixarZip(lista: Evento[], nomeArquivo: string) {
+    if (lista.length === 0) return;
+    setBaixando(`0/${lista.length}`);
     try {
       const zip = new JSZip();
       const usados = new Set<string>();
       let i = 0;
-      for (const ev of filtrados) {
+      for (const ev of lista) {
         i++;
-        setBaixando(`${i}/${filtrados.length}`);
+        setBaixando(`${i}/${lista.length}`);
         const { data } = await supabase.storage.from("notas").download(ev.foto_path);
         if (!data) continue;
         let nome = nomeArquivoFoto(ev);
@@ -171,7 +246,7 @@ export default function AdminApp({
         zip.file(nome, data);
       }
       const blob = await zip.generateAsync({ type: "blob" });
-      descargarBlob(blob, `fotos_${inicio}_a_${fim}.zip`);
+      descargarBlob(blob, nomeArquivo);
     } catch {
       alert("Erro ao gerar o ZIP.");
     } finally {
@@ -194,8 +269,8 @@ export default function AdminApp({
   return (
     <>
       <TopBar nome={nome} papel={podeGerenciar ? "Administrador" : "Supervisor"} />
-      <main className="wrap">
-        <div className="section-title">
+      <main className="wrap wrap-wide">
+        <div className="section-title" style={{ flexWrap: "wrap", rowGap: 8 }}>
           <span>Notas fiscais</span>
           <span className="count">{filtrados.length}</span>
           <span className="spacer" />
@@ -204,9 +279,18 @@ export default function AdminApp({
               👥 Usuários
             </Link>
           )}
+          {selecionadasList.length > 0 && (
+            <button
+              className="btn btn-light"
+              onClick={() => baixarZip(selecionadasList, "fotos_selecionadas.zip")}
+              disabled={baixando !== null}
+            >
+              📷 Selecionadas ({selecionadasList.length})
+            </button>
+          )}
           <button
             className="btn btn-light"
-            onClick={baixarTodas}
+            onClick={() => baixarZip(filtrados, `fotos_${inicio}_a_${fim}.zip`)}
             disabled={filtrados.length === 0 || baixando !== null}
           >
             {baixando ? `📷 ${baixando}…` : "📷 Fotos (ZIP)"}
@@ -284,6 +368,15 @@ export default function AdminApp({
             </div>
           </div>
 
+          <div className="field" style={{ marginTop: 10 }}>
+            <label>🔎 Buscar (fornecedor ou valor)</label>
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="ex: LAVANDERIA  ou  200,45"
+            />
+          </div>
+
           <p className="note" style={{ marginBottom: 2 }}>
             Período: <strong>{inicio || "—"}</strong> a <strong>{fim || "—"}</strong>
           </p>
@@ -306,21 +399,36 @@ export default function AdminApp({
               <table>
                 <thead>
                   <tr>
-                    <th>ID</th>
-                    <th>Data</th>
-                    <th>Fornecedor</th>
-                    <th>Valor</th>
-                    <th>Centro de custo</th>
-                    <th>Categoria</th>
-                    <th>Pagamento</th>
-                    <th>Cartão</th>
-                    <th>Usuário</th>
+                    <th style={{ width: 30 }}>
+                      <input
+                        type="checkbox"
+                        checked={todasSel}
+                        onChange={toggleTodas}
+                        title="Selecionar tudo"
+                      />
+                    </th>
+                    {renderTh("id", "ID")}
+                    {renderTh("data", "Data")}
+                    {renderTh("fornecedor", "Fornecedor")}
+                    {renderTh("valor", "Valor")}
+                    {renderTh("centro", "Centro de custo")}
+                    {renderTh("categoria", "Categoria")}
+                    {renderTh("pagamento", "Pagamento")}
+                    {renderTh("cartao", "Cartão")}
+                    {renderTh("usuario", "Usuário")}
                     <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filtrados.map((e) => (
+                  {ordenados.map((e) => (
                     <tr key={e.id}>
+                      <td>
+                        <input
+                          type="checkbox"
+                          checked={selecionados.has(e.id)}
+                          onChange={() => toggleSel(e.id)}
+                        />
+                      </td>
                       <td className="codigo">{codigoId(e.id)}</td>
                       <td>{e.data_documento || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>

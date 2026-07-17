@@ -80,6 +80,10 @@ body {
   padding: 16px 16px 96px;
 }
 
+.wrap-wide {
+  max-width: 1200px;
+}
+
 /* ---------- Tarjetas ---------- */
 .card {
   background: var(--surface);
@@ -366,7 +370,8 @@ button {
 
 /* ---------- Tabla admin ---------- */
 .table-scroll {
-  overflow-x: auto;
+  overflow: auto;
+  max-height: 68vh;
   margin-top: 8px;
   border: 1px solid var(--border);
   border-radius: 12px;
