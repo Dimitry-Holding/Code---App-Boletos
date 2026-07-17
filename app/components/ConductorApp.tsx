@@ -57,6 +57,9 @@ export default function ConductorApp({
   const [centros, setCentros] = useState<CentroCusto[]>([]);
   const [filtroCentro, setFiltroCentro] = useState("todos");
   const [filtroCategoria, setFiltroCategoria] = useState("todos");
+  const [busca, setBusca] = useState("");
+  const [ordenarCol, setOrdenarCol] = useState("data");
+  const [ordenarDir, setOrdenarDir] = useState<1 | -1>(-1);
   const [editId, setEditId] = useState<number | null>(null);
   const [fotoEditUrl, setFotoEditUrl] = useState<string | null>(null);
 
@@ -94,9 +97,32 @@ export default function ConductorApp({
       return false;
     if (filtroCategoria !== "todos" && (e.categoria || "") !== filtroCategoria)
       return false;
+    if (busca.trim()) {
+      const q = busca.trim().toLowerCase();
+      const forn = (e.fornecedor || "").toLowerCase();
+      const val = String(e.valor ?? "");
+      if (!forn.includes(q) && !val.includes(q)) return false;
+    }
     return true;
   });
   const total = eventosFiltrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+
+  function valorOrden(e: Evento, col: string): string | number {
+    switch (col) {
+      case "valor": return Number(e.valor ?? 0);
+      case "fornecedor": return (e.fornecedor || "").toLowerCase();
+      case "categoria": return (e.categoria || "").toLowerCase();
+      case "centro": return (e.centro_custo || "").toLowerCase();
+      default: return e.data_documento || e.criado_em || ""; // "data"
+    }
+  }
+  const eventosOrdenados = [...eventosFiltrados].sort((a, b) => {
+    const va = valorOrden(a, ordenarCol);
+    const vb = valorOrden(b, ordenarCol);
+    if (va < vb) return -ordenarDir;
+    if (va > vb) return ordenarDir;
+    return 0;
+  });
 
   async function alElegir(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -543,6 +569,35 @@ export default function ConductorApp({
             </div>
           </div>
 
+          <div className="field" style={{ marginTop: 8 }}>
+            <label>🔎 Buscar (fornecedor ou valor)</label>
+            <input
+              value={busca}
+              onChange={(e) => setBusca(e.target.value)}
+              placeholder="ex: LAVANDERIA  ou  200"
+            />
+          </div>
+          <div className="row" style={{ marginTop: 8, alignItems: "flex-end", gap: 8 }}>
+            <div className="field" style={{ marginTop: 0, flex: 1 }}>
+              <label>Ordenar por</label>
+              <select value={ordenarCol} onChange={(e) => setOrdenarCol(e.target.value)}>
+                <option value="data">Data</option>
+                <option value="valor">Valor</option>
+                <option value="fornecedor">Fornecedor</option>
+                <option value="categoria">Categoria</option>
+                <option value="centro">Centro de custo</option>
+              </select>
+            </div>
+            <button
+              type="button"
+              className="btn btn-light"
+              onClick={() => setOrdenarDir((d) => (d === 1 ? -1 : 1))}
+              title="Inverter ordem"
+            >
+              {ordenarDir === 1 ? "▲ Asc" : "▼ Desc"}
+            </button>
+          </div>
+
           <p className="note">
             Total do período: <strong>R$ {total.toFixed(2)}</strong>
           </p>
@@ -550,10 +605,11 @@ export default function ConductorApp({
           {eventosFiltrados.length === 0 ? (
             <p className="note">Nenhuma nota neste mês.</p>
           ) : (
-            eventosFiltrados.map((ev) => {
-              const editavel = dentroDePlazo(ev.criado_em);
-              return (
-                <div key={ev.id} className="evento">
+            <div className="lista-scroll">
+              {eventosOrdenados.map((ev) => {
+                const editavel = dentroDePlazo(ev.criado_em);
+                return (
+                  <div key={ev.id} className="evento">
                   <div className="top">
                     <span className="fornecedor">{ev.fornecedor || "(sem fornecedor)"}</span>
                     <span className="valor">R$ {Number(ev.valor ?? 0).toFixed(2)}</span>
@@ -582,7 +638,8 @@ export default function ConductorApp({
                   </div>
                 </div>
               );
-            })
+              })}
+            </div>
           )}
         </div>
       </main>

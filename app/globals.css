@@ -84,6 +84,12 @@ body {
   max-width: 1200px;
 }
 
+.lista-scroll {
+  max-height: 62vh;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
 /* ---------- Tarjetas ---------- */
 .card {
   background: var(--surface);
