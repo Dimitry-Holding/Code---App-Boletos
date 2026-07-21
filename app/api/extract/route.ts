@@ -5,8 +5,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const MODELO = process.env.GEMINI_MODEL || "gemini-flash-latest";
-const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODELO}:generateContent`;
+// Modelo principal y respaldo: si el principal agota su cuota gratuita (429),
+// se intenta automáticamente con el siguiente de la lista.
+const MODELOS = [
+  process.env.GEMINI_MODEL || "gemini-flash-latest",
+  "gemini-3.1-flash-lite",
+].filter((m, i, arr) => arr.indexOf(m) === i);
+
+function endpointDe(modelo: string): string {
+  return `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`;
+}
 
 const TIPOS_PAGO = ["debito", "credito"];
 const CONFIANZAS = ["alta", "media", "baixa"];
@@ -137,23 +145,36 @@ export async function POST(req: Request) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let data: any = null;
 
-    for (let intento = 0; intento < 3; intento++) {
-      respuesta = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: cuerpoGemini,
-      });
-      data = await respuesta.json();
-      if (respuesta.ok) break;
-      if (!REINTENTABLES.has(respuesta.status) || intento === 2) break;
-      // 429 = cuota por minuto: Gemini suele pedir ~10s de espera antes de
-      // reintentar (ej: "Please retry in 10.4s"). Respetamos ese tiempo.
-      let espera = 800 * (intento + 1);
-      if (respuesta.status === 429) {
-        const m = /retry in ([0-9.]+)s/i.exec(data?.error?.message ?? "");
-        espera = m ? Math.min(Number(m[1]) * 1000 + 500, 20000) : 11000;
+    // Se intenta con cada modelo en orden; si uno agota su cuota (429),
+    // se pasa al siguiente. Dentro de cada modelo hay hasta 3 intentos.
+    porModelo: for (let m = 0; m < MODELOS.length; m++) {
+      const ultimoModelo = m === MODELOS.length - 1;
+      for (let intento = 0; intento < 3; intento++) {
+        respuesta = await fetch(endpointDe(MODELOS[m]), {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: cuerpoGemini,
+        });
+        data = await respuesta.json();
+        if (respuesta.ok) break porModelo;
+        if (!REINTENTABLES.has(respuesta.status)) break porModelo;
+        if (intento === 2) {
+          // Intentos agotados: con 429 probamos el siguiente modelo; con
+          // errores transitorios (500/502/...) ya no insistimos.
+          if (respuesta.status === 429 && !ultimoModelo) continue porModelo;
+          break porModelo;
+        }
+        if (respuesta.status === 429) {
+          // Cuota agotada: si hay modelo de respaldo, pasamos directo a él.
+          if (!ultimoModelo) continue porModelo;
+          // Último modelo: esperamos lo que pide Google ("retry in Xs").
+          const seg = /retry in ([0-9.]+)s/i.exec(data?.error?.message ?? "");
+          const espera = seg ? Math.min(Number(seg[1]) * 1000 + 500, 20000) : 11000;
+          await new Promise((r) => setTimeout(r, espera));
+        } else {
+          await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
+        }
       }
-      await new Promise((r) => setTimeout(r, espera));
     }
 
     if (!respuesta || !respuesta.ok) {
