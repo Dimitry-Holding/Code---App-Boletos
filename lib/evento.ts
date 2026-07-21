@@ -65,12 +65,30 @@ export function limparNome(texto: string): string {
 }
 
 /**
+ * Máximo de caracteres del fornecedor dentro del nombre de archivo.
+ * Windows limita la RUTA COMPLETA a 260 caracteres; con carpetas profundas
+ * (OneDrive corporativo) los nombres largos daban error 0x80010135 al extraer.
+ */
+const MAX_FORNECEDOR_ARQUIVO = 30;
+
+/** Recorta un texto a `max` caracteres, cortando en un espacio si se puede. */
+function encurtar(texto: string, max: number): string {
+  if (texto.length <= max) return texto;
+  const corte = texto.slice(0, max);
+  const espaco = corte.lastIndexOf(" ");
+  return (espaco > max * 0.6 ? corte.slice(0, espaco) : corte).trim();
+}
+
+/**
  * Nombre de archivo de la foto: Fornecedor-Data-R$Valor-Cartao.ext
  * Ej: "LAVANDERIA ASA SUL LTDA-2026-06-18-R$200,45-1261.jpg"
+ * El fornecedor se recorta para no superar el límite de ruta de Windows.
  */
 export function nomeArquivoFoto(e: Evento): string {
   const ext = e.foto_path.toLowerCase().endsWith(".pdf") ? "pdf" : "jpg";
-  const forn = limparNome(e.fornecedor || "") || "Fornecedor";
+  const forn =
+    encurtar(limparNome(e.fornecedor || ""), MAX_FORNECEDOR_ARQUIVO) ||
+    "Fornecedor";
   const data = e.data_documento || "sem-data";
   const valor = "R$" + Number(e.valor ?? 0).toFixed(2).replace(".", ",");
   const cartao = e.ultimos4 || "0000";

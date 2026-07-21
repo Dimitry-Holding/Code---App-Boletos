@@ -230,6 +230,9 @@ export default function AdminApp({
     setBaixando(`0/${lista.length}`);
     try {
       const zip = new JSZip();
+      // JSZip guarda las fechas en UTC; compensamos para que el archivo
+      // extraído muestre la hora local correcta (y no "del futuro").
+      const dataLocal = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
       const usados = new Set<string>();
       let i = 0;
       for (const ev of lista) {
@@ -243,7 +246,7 @@ export default function AdminApp({
           nome = `${nome.slice(0, punto)}-${ev.id}${nome.slice(punto)}`;
         }
         usados.add(nome);
-        zip.file(nome, data);
+        zip.file(nome, data, { date: dataLocal });
       }
       const blob = await zip.generateAsync({ type: "blob" });
       descargarBlob(blob, nomeArquivo);

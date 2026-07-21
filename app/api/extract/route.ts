@@ -146,7 +146,14 @@ export async function POST(req: Request) {
       data = await respuesta.json();
       if (respuesta.ok) break;
       if (!REINTENTABLES.has(respuesta.status) || intento === 2) break;
-      await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
+      // 429 = cuota por minuto: Gemini suele pedir ~10s de espera antes de
+      // reintentar (ej: "Please retry in 10.4s"). Respetamos ese tiempo.
+      let espera = 800 * (intento + 1);
+      if (respuesta.status === 429) {
+        const m = /retry in ([0-9.]+)s/i.exec(data?.error?.message ?? "");
+        espera = m ? Math.min(Number(m[1]) * 1000 + 500, 20000) : 11000;
+      }
+      await new Promise((r) => setTimeout(r, espera));
     }
 
     if (!respuesta || !respuesta.ok) {
