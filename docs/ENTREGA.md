@@ -17,7 +17,7 @@ variables de entorno de Vercel.
 | **Google Gemini** | IA que lee las notas | API key (nivel gratuito) | ⚠️ Hoy en cuenta **Google PERSONAL** |
 | **Supabase** | Base de datos + fotos + logins | proyecto `rvrbogroafidhtuwfljo` | ⚠️ Verificar de quién es la cuenta |
 | **Vercel** | Hosting (la URL pública) | org `dimitry-holding` | Login del usuario |
-| **GitHub** | Código fuente | `LuisL-Dimitry/Code---App-Boletos` | ⚠️ Cuenta personal `LuisL-Dimitry` |
+| **GitHub** | Código fuente | `Dimitry-Holding/Code---App-Boletos` | ✅ Organização da empresa |
 
 ---
 
@@ -59,13 +59,10 @@ variables de entorno de Vercel.
    Si el proyecto está en tu cuenta personal, **transferílo** a la organización de Dimitry.
 3. Confirmá que **Deployment Protection** esté como lo necesiten (para que el equipo entre).
 
-### 4. GitHub — sacar el repo de tu cuenta personal
-- El repo está en **`LuisL-Dimitry`** (cuenta personal). Opciones:
-  - **Transferir** el repo a una **organización de GitHub de Dimitry** (Repo → Settings →
-    General → Transfer ownership), **o**
-  - Agregar a un dueño de Dimitry como **admin/colaborador** del repo.
-- Recordá que Vercel está conectado a este repo (deploy automático). Si transferís el repo,
-  reconectá el proyecto en Vercel al nuevo dueño.
+### 4. GitHub — ✅ FEITO (2026-07-24)
+- O repo foi **transferido** para a organização **`Dimitry-Holding`** no GitHub.
+  Novo endereço: `https://github.com/Dimitry-Holding/Code---App-Boletos`.
+- ⏳ **Pendente:** reconectar a **Vercel** ao repo no novo endereço (deploy automático).
 
 ### 5. Archivos locales para entregar al sucesor
 Estos archivos están en tu equipo (carpeta del proyecto, dentro de tu OneDrive):

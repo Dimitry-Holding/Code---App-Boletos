@@ -18,7 +18,7 @@ não feita — é uma melhoria futura).
 - **Google Gemini** (nível gratuito) — leitura das imagens/PDFs
 - **Supabase** — Postgres (dados) + Auth (login) + Storage (fotos), com **RLS** (segurança por papel)
 - **Vercel** — hospedagem; **deploy automático** a cada `git push` na branch `main`
-- **GitHub** — repositório `LuisL-Dimitry/Code---App-Boletos`
+- **GitHub** — repositório `Dimitry-Holding/Code---App-Boletos` (na organização da empresa)
 - Bibliotecas: `xlsx` (Excel), `jszip` (ZIP de fotos)
 
 ## Papéis
@@ -67,8 +67,8 @@ Publicar = `git push origin main` (a Vercel faz o deploy sozinha).
 Objetivo: tirar tudo de contas pessoais e passar para contas Dimitry, rotacionando as chaves.
 Fazer nesta ordem por causa das dependências:
 
-1. **GitHub** — transferir o repo `LuisL-Dimitry/Code---App-Boletos` para uma org/conta Dimitry
-   (ou adicionar a nova pessoa como admin). Se transferir, reconectar o projeto na Vercel.
+1. **GitHub** — ✅ FEITO (2026-07-24): repo transferido para a organização `Dimitry-Holding`.
+   ⏳ Falta: **reconectar a Vercel** ao novo endereço do repo (senão o deploy automático para).
 2. **Supabase** — transferir o projeto `rvrbogroafidhtuwfljo` para uma org Dimitry (ou virar
    Owner). Rotacionar as chaves de API (anon/service_role). **Ao rotacionar, atualizar as 3
    variáveis na Vercel e no `.env.local`** — senão o app para de conectar.

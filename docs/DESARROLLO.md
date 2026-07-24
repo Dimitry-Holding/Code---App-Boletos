@@ -17,7 +17,7 @@ computadora, seguí esta guía.
 
 1. **Clonar el código:**
    ```bash
-   git clone https://github.com/LuisL-Dimitry/Code---App-Boletos.git
+   git clone https://github.com/Dimitry-Holding/Code---App-Boletos.git
    cd "Code---App-Boletos"
    ```
 2. **Instalar dependencias:**
