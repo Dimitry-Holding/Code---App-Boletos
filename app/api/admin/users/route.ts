@@ -86,6 +86,14 @@ export async function POST(req: Request) {
     await admin.from("profiles").update({ role }).eq("id", data.user.id);
   }
 
+  // Los usuarios (conductores) nacen con la categoría "IOF": ahí se guarda la
+  // línea automática de IOF de las compras en moneda extranjera.
+  if (data.user && role !== "admin" && role !== "supervisor") {
+    await admin
+      .from("categorias")
+      .insert({ user_id: data.user.id, nome: "IOF" });
+  }
+
   return Response.json({ ok: true });
 }
 

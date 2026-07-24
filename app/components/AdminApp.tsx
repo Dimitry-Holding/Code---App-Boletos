@@ -9,6 +9,7 @@ import {
   type Evento,
   codigoId,
   nomeArquivoFoto,
+  valorBRL,
   COLUNAS_EXCEL,
   TIPO_PAGAMENTO_LABEL,
 } from "@/lib/evento";
@@ -102,19 +103,19 @@ export default function AdminApp({
     if (busca.trim()) {
       const q = busca.trim().toLowerCase();
       const forn = (e.fornecedor || "").toLowerCase();
-      const val = String(e.valor ?? "");
+      const val = String(e.valor ?? "") + " " + valorBRL(e).toFixed(2);
       if (!forn.includes(q) && !val.includes(q)) return false;
     }
     return true;
   });
 
-  const total = filtrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+  const total = filtrados.reduce((s, e) => s + valorBRL(e), 0);
 
   // --- Ordenar por columna ---
   function valorOrden(e: Evento, col: string): string | number {
     switch (col) {
       case "id": return e.id;
-      case "valor": return Number(e.valor ?? 0);
+      case "valor": return valorBRL(e);
       case "data": return e.data_documento || "";
       case "fornecedor": return (e.fornecedor || "").toLowerCase();
       case "centro": return (e.centro_custo || "").toLowerCase();
@@ -260,7 +261,16 @@ export default function AdminApp({
   /** Borra una nota (y su foto). Solo el admin. */
   async function eliminar(ev: Evento) {
     if (!confirm(`Excluir ${codigoId(ev.id)} (${ev.fornecedor ?? ""})?`)) return;
-    await supabase.storage.from("notas").remove([ev.foto_path]);
+    // La foto puede estar compartida con la línea de IOF: solo se borra del
+    // Storage cuando ninguna otra nota la usa.
+    const { count } = await supabase
+      .from("eventos")
+      .select("id", { count: "exact", head: true })
+      .eq("foto_path", ev.foto_path)
+      .neq("id", ev.id);
+    if (!count) {
+      await supabase.storage.from("notas").remove([ev.foto_path]);
+    }
     const { error } = await supabase.from("eventos").delete().eq("id", ev.id);
     if (error) {
       alert("Não foi possível excluir.");
@@ -413,7 +423,7 @@ export default function AdminApp({
                     {renderTh("id", "ID")}
                     {renderTh("data", "Data")}
                     {renderTh("fornecedor", "Fornecedor")}
-                    {renderTh("valor", "Valor")}
+                    {renderTh("valor", "Valor (R$)")}
                     {renderTh("centro", "Centro de custo")}
                     {renderTh("categoria", "Categoria")}
                     {renderTh("pagamento", "Pagamento")}
@@ -435,7 +445,14 @@ export default function AdminApp({
                       <td className="codigo">{codigoId(e.id)}</td>
                       <td>{e.data_documento || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>
-                      <td className="num">{Number(e.valor ?? 0).toFixed(2)}</td>
+                      <td className="num">
+                        {valorBRL(e).toFixed(2)}
+                        {e.moeda && e.moeda !== "BRL" && (
+                          <div className="note" style={{ margin: 0, whiteSpace: "nowrap" }}>
+                            {e.moeda} {Number(e.valor ?? 0).toFixed(2)}
+                          </div>
+                        )}
+                      </td>
                       <td>{e.centro_custo || "—"}</td>
                       <td>{e.categoria || "—"}</td>
                       <td>

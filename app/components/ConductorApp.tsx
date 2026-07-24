@@ -11,6 +11,10 @@ import {
   codigoId,
   labelCartao,
   dentroDePlazo,
+  valorBRL,
+  IOF_TAXA,
+  IOF_CATEGORIA,
+  MOEDAS,
 } from "@/lib/evento";
 import TopBar from "./TopBar";
 
@@ -67,6 +71,10 @@ export default function ConductorApp({
   const [ordenarDir, setOrdenarDir] = useState<1 | -1>(-1);
   const [editId, setEditId] = useState<number | null>(null);
   const [fotoEditUrl, setFotoEditUrl] = useState<string | null>(null);
+  // Conversión de moneda: cambio editable (se precarga con el PTAX del BCB)
+  const [cambio, setCambio] = useState("");
+  const [buscandoCambio, setBuscandoCambio] = useState(false);
+  const [cambioInfo, setCambioInfo] = useState<string | null>(null);
 
   const camRef = useRef<HTMLInputElement>(null);
   const galRef = useRef<HTMLInputElement>(null);
@@ -80,6 +88,57 @@ export default function ConductorApp({
     cargarTodo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // --- Conversión de moneda ---
+  const emRevisao = estado === "revision" || estado === "edicion";
+  const moedaEstrangeira = borrador.moeda !== "BRL";
+  const cambioNum = parseFloat(cambio.replace(",", ".")) || 0;
+  const valorBrlBorrador = moedaEstrangeira
+    ? Math.round(borrador.valor * cambioNum * 100) / 100
+    : borrador.valor;
+  const iofBorrador = Math.round(valorBrlBorrador * IOF_TAXA * 100) / 100;
+  // Evita re-buscar el PTAX si moneda+fecha no cambiaron (p. ej. al editar).
+  const claveCambioRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!emRevisao || !moedaEstrangeira) {
+      setCambioInfo(null);
+      return;
+    }
+    const clave = `${borrador.moeda}|${borrador.data_documento}`;
+    if (claveCambioRef.current === clave) return;
+    claveCambioRef.current = clave;
+    let cancelado = false;
+    (async () => {
+      setBuscandoCambio(true);
+      setCambioInfo(null);
+      try {
+        const r = await fetch(
+          `/api/cambio?moeda=${borrador.moeda}&data=${borrador.data_documento || ""}`,
+        );
+        const j = await r.json();
+        if (cancelado) return;
+        if (r.ok && j.cambio) {
+          setCambio(String(j.cambio));
+          setCambioInfo(`PTAX ${j.data_cotacao} (Banco Central)`);
+        } else {
+          setCambio("");
+          setCambioInfo(j.error || "Informe o câmbio manualmente.");
+        }
+      } catch {
+        if (!cancelado) {
+          setCambio("");
+          setCambioInfo("Informe o câmbio manualmente.");
+        }
+      } finally {
+        if (!cancelado) setBuscandoCambio(false);
+      }
+    })();
+    return () => {
+      cancelado = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [emRevisao, moedaEstrangeira, borrador.moeda, borrador.data_documento]);
 
   async function cargarTodo() {
     const [{ data: evs }, { data: cs }, { data: cats }, { data: ccs }] =
@@ -105,16 +164,16 @@ export default function ConductorApp({
     if (busca.trim()) {
       const q = busca.trim().toLowerCase();
       const forn = (e.fornecedor || "").toLowerCase();
-      const val = String(e.valor ?? "");
+      const val = String(e.valor ?? "") + " " + valorBRL(e).toFixed(2);
       if (!forn.includes(q) && !val.includes(q)) return false;
     }
     return true;
   });
-  const total = eventosFiltrados.reduce((s, e) => s + (Number(e.valor) || 0), 0);
+  const total = eventosFiltrados.reduce((s, e) => s + valorBRL(e), 0);
 
   function valorOrden(e: Evento, col: string): string | number {
     switch (col) {
-      case "valor": return Number(e.valor ?? 0);
+      case "valor": return valorBRL(e);
       case "fornecedor": return (e.fornecedor || "").toLowerCase();
       case "categoria": return (e.categoria || "").toLowerCase();
       case "centro": return (e.centro_custo || "").toLowerCase();
@@ -212,9 +271,15 @@ export default function ConductorApp({
   }
 
   function validar(): string | null {
+    if (!borrador.fornecedor.trim()) return "Informe o fornecedor.";
+    if (!(borrador.valor > 0)) return "Informe o valor (maior que zero).";
+    if (!borrador.data_documento) return "Informe a data do documento.";
     if (!borrador.centro_custo) return "Selecione o centro de custo.";
     if (!borrador.ultimos4) return "Selecione o cartão.";
     if (!borrador.categoria) return "Selecione a categoria.";
+    if (!borrador.descricao.trim()) return "Escreva uma descrição.";
+    if (moedaEstrangeira && !(cambioNum > 0))
+      return "Informe o câmbio para converter a real.";
     return null;
   }
 
@@ -245,6 +310,8 @@ export default function ConductorApp({
         fornecedor: borrador.fornecedor || null,
         valor: borrador.valor || null,
         moeda: borrador.moeda || "BRL",
+        valor_brl: valorBrlBorrador || null,
+        cambio: moedaEstrangeira ? cambioNum : null,
         centro_custo: borrador.centro_custo,
         data_documento: borrador.data_documento || null,
         categoria: borrador.categoria,
@@ -255,6 +322,33 @@ export default function ConductorApp({
         foto_path: path,
       });
       if (ins.error) throw ins.error;
+
+      // Compra en moneda extranjera: se registra el IOF como una línea aparte
+      // (misma foto, misma fecha/tarjeta/centro, categoría "IOF").
+      if (moedaEstrangeira && iofBorrador > 0) {
+        const iofIns = await supabase.from("eventos").insert({
+          conductor_id: userId,
+          fornecedor: `IOF — ${borrador.fornecedor}`,
+          valor: iofBorrador,
+          moeda: "BRL",
+          valor_brl: iofBorrador,
+          cambio: null,
+          centro_custo: borrador.centro_custo,
+          data_documento: borrador.data_documento || null,
+          categoria: IOF_CATEGORIA,
+          tipo_pagamento: borrador.tipo_pagamento,
+          ultimos4: borrador.ultimos4 || null,
+          descricao: `IOF de ${(IOF_TAXA * 100).toFixed(1).replace(".", ",")}% sobre compra internacional (${borrador.moeda} ${borrador.valor.toFixed(2)} × ${cambioNum})`,
+          confianca: "alta",
+          foto_path: path,
+        });
+        if (iofIns.error) {
+          alert(
+            "A nota foi salva, mas não foi possível criar a linha de IOF: " +
+              iofIns.error.message,
+          );
+        }
+      }
 
       await cargarTodo();
       limparEstado(); // NO borrar el archivo recién guardado
@@ -280,6 +374,12 @@ export default function ConductorApp({
       confianca: (ev.confianca as Borrador["confianca"]) ?? "media",
       centro_custo: ev.centro_custo ?? "",
     });
+    // Cambio guardado en la nota; se conserva salvo que cambien moneda o fecha.
+    setCambio(ev.cambio ? String(ev.cambio) : "");
+    setCambioInfo(ev.cambio ? "Câmbio salvo com a nota" : null);
+    claveCambioRef.current = ev.cambio
+      ? `${ev.moeda ?? "BRL"}|${ev.data_documento ?? ""}`
+      : null;
     setFotoEditUrl(null);
     const { data } = await supabase.storage
       .from("notas")
@@ -309,6 +409,8 @@ export default function ConductorApp({
           fornecedor: borrador.fornecedor || null,
           valor: borrador.valor || null,
           moeda: borrador.moeda || "BRL",
+          valor_brl: valorBrlBorrador || null,
+          cambio: moedaEstrangeira ? cambioNum : null,
           centro_custo: borrador.centro_custo,
           data_documento: borrador.data_documento || null,
           categoria: borrador.categoria,
@@ -334,6 +436,9 @@ export default function ConductorApp({
     setEditId(null);
     setFotoEditUrl(null);
     setError(null);
+    setCambio("");
+    setCambioInfo(null);
+    claveCambioRef.current = null;
   }
 
   async function cancelar() {
@@ -346,7 +451,16 @@ export default function ConductorApp({
 
   async function eliminar(ev: Evento) {
     if (!confirm("Excluir esta nota? Esta ação não pode ser desfeita.")) return;
-    await supabase.storage.from("notas").remove([ev.foto_path]);
+    // La foto puede estar compartida con la línea de IOF: solo se borra del
+    // Storage cuando ninguna otra nota la usa.
+    const { count } = await supabase
+      .from("eventos")
+      .select("id", { count: "exact", head: true })
+      .eq("foto_path", ev.foto_path)
+      .neq("id", ev.id);
+    if (!count) {
+      await supabase.storage.from("notas").remove([ev.foto_path]);
+    }
     const { error } = await supabase.from("eventos").delete().eq("id", ev.id);
     if (error) {
       alert("Não foi possível excluir (talvez já passaram 30 dias).");
@@ -460,13 +574,13 @@ export default function ConductorApp({
             </div>
 
             <div className="field">
-              <label>Fornecedor</label>
+              <label>Fornecedor *</label>
               <input value={borrador.fornecedor} onChange={(e) => actualizar("fornecedor", e.target.value)} />
             </div>
 
             <div className="grid-2">
               <div className="field">
-                <label>Valor</label>
+                <label>Valor *</label>
                 <input
                   type="number"
                   step="0.01"
@@ -475,7 +589,7 @@ export default function ConductorApp({
                 />
               </div>
               <div className="field">
-                <label>Data</label>
+                <label>Data *</label>
                 <input
                   type="date"
                   value={borrador.data_documento}
@@ -483,6 +597,58 @@ export default function ConductorApp({
                 />
               </div>
             </div>
+
+            <div className="grid-2">
+              <div className="field">
+                <label>Moeda *</label>
+                <select
+                  value={borrador.moeda}
+                  onChange={(e) => actualizar("moeda", e.target.value)}
+                >
+                  {(MOEDAS.includes(borrador.moeda)
+                    ? MOEDAS
+                    : [...MOEDAS, borrador.moeda]
+                  ).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              {moedaEstrangeira && (
+                <div className="field">
+                  <label>Câmbio (1 {borrador.moeda} em R$) *</label>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={cambio}
+                    placeholder={buscandoCambio ? "Buscando…" : "ex: 5,43"}
+                    onChange={(e) => setCambio(e.target.value)}
+                  />
+                </div>
+              )}
+            </div>
+
+            {moedaEstrangeira && (
+              <div className="note" style={{ marginTop: 2 }}>
+                {buscandoCambio
+                  ? "Consultando o câmbio no Banco Central…"
+                  : cambioInfo}
+                {cambioNum > 0 && borrador.valor > 0 && (
+                  <>
+                    <br />
+                    Valor convertido: <strong>R$ {valorBrlBorrador.toFixed(2)}</strong>
+                    {!editando && (
+                      <>
+                        {" "}· Será criada automaticamente uma linha de IOF (
+                        {(IOF_TAXA * 100).toFixed(1).replace(".", ",")}%):{" "}
+                        <strong>R$ {iofBorrador.toFixed(2)}</strong>
+                      </>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
 
             <div className="field">
               <label>Centro de custo *</label>
@@ -535,7 +701,7 @@ export default function ConductorApp({
             </div>
 
             <div className="field">
-              <label>Descrição</label>
+              <label>Descrição *</label>
               <textarea value={borrador.descricao} onChange={(e) => actualizar("descricao", e.target.value)} />
             </div>
 
@@ -653,7 +819,14 @@ export default function ConductorApp({
                   <div key={ev.id} className="evento">
                   <div className="top">
                     <span className="fornecedor">{ev.fornecedor || "(sem fornecedor)"}</span>
-                    <span className="valor">R$ {Number(ev.valor ?? 0).toFixed(2)}</span>
+                    <span className="valor">
+                      R$ {valorBRL(ev).toFixed(2)}
+                      {ev.moeda && ev.moeda !== "BRL" && (
+                        <span className="note" style={{ margin: 0, display: "block", textAlign: "right" }}>
+                          {ev.moeda} {Number(ev.valor ?? 0).toFixed(2)}
+                        </span>
+                      )}
+                    </span>
                   </div>
                   <div className="meta">
                     <span className="codigo">{codigoId(ev.id)}</span>{" "}

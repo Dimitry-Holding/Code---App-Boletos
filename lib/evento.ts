@@ -18,6 +18,8 @@ export type Evento = {
   fornecedor: string | null;
   valor: number | null;
   moeda: string | null;
+  valor_brl: number | null; // valor convertido a reales (= valor si moeda es BRL)
+  cambio: number | null; // tipo de cambio usado (null si moeda es BRL)
   centro_custo: string | null;
   data_documento: string | null;
   categoria: string | null;
@@ -28,6 +30,24 @@ export type Evento = {
   foto_path: string;
   criado_em: string;
 };
+
+/** Valor del evento en reales (notas viejas sin valor_brl usan valor directo). */
+export function valorBRL(e: Evento): number {
+  return Number(e.valor_brl ?? e.valor ?? 0);
+}
+
+/** IOF sobre compras internacionales con tarjeta (3,5% desde mayo/2025). */
+export const IOF_TAXA = 0.035;
+/** Categoría con la que se guarda la línea automática de IOF. */
+export const IOF_CATEGORIA = "IOF";
+
+/**
+ * Monedas con cotización PTAX en el Banco Central (además de BRL).
+ * Para otras monedas el usuario puede escribir el cambio a mano.
+ */
+export const MOEDAS = [
+  "BRL", "USD", "EUR", "GBP", "CHF", "JPY", "CAD", "AUD", "DKK", "NOK", "SEK",
+];
 
 /** Tarjeta (TDC) asignada a un usuario. */
 export type Cartao = {
@@ -122,8 +142,10 @@ export const COLUNAS_EXCEL: {
   { titulo: "ID", valor: (e) => codigoId(e.id) },
   { titulo: "Data", valor: (e) => e.data_documento ?? "" },
   { titulo: "Fornecedor", valor: (e) => e.fornecedor ?? "" },
-  { titulo: "Valor", valor: (e) => e.valor ?? 0 },
+  { titulo: "Valor (R$)", valor: (e) => valorBRL(e) },
   { titulo: "Moeda", valor: (e) => e.moeda ?? "" },
+  { titulo: "Valor original", valor: (e) => e.valor ?? 0 },
+  { titulo: "Câmbio", valor: (e) => e.cambio ?? "" },
   { titulo: "Centro de custo", valor: (e) => e.centro_custo ?? "" },
   { titulo: "Categoria", valor: (e) => e.categoria ?? "" },
   { titulo: "Pagamento", valor: (e) => TIPO_PAGAMENTO_LABEL[e.tipo_pagamento ?? ""] ?? "" },
