@@ -310,7 +310,7 @@ export default function AdminApp({
           {selecionadasList.length > 0 && (
             <button
               className="btn btn-light"
-              onClick={() => baixarZip(selecionadasList, "fotos_selecionadas.zip")}
+              onClick={() => baixarZip(selecionadasList, "pdfs_selecionadas.zip")}
               disabled={baixando !== null}
             >
               📄 Selecionadas ({selecionadasList.length})
@@ -318,7 +318,7 @@ export default function AdminApp({
           )}
           <button
             className="btn btn-light"
-            onClick={() => baixarZip(filtrados, `fotos_${inicio}_a_${fim}.zip`)}
+            onClick={() => baixarZip(filtrados, `pdfs_${inicio}_a_${fim}.zip`)}
             disabled={filtrados.length === 0 || baixando !== null}
           >
             {baixando ? `📄 ${baixando}…` : "📄 PDFs (ZIP)"}
