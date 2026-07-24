@@ -35,7 +35,8 @@ export async function proxy(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const ruta = request.nextUrl.pathname;
-  const esRutaPublica = ruta === "/login" || ruta.startsWith("/auth");
+  const esRutaPublica =
+    ruta === "/login" || ruta.startsWith("/auth") || ruta === "/api/health";
 
   if (!user && !esRutaPublica) {
     const url = request.nextUrl.clone();
