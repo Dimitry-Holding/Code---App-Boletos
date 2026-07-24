@@ -115,6 +115,14 @@ export function nomeArquivoFoto(e: Evento): string {
   return `${forn}-${data}-${valor}-${cartao}.${ext}`;
 }
 
+/**
+ * Nome do arquivo para download SEMPRE em PDF (fotos JPG são convertidas em PDF
+ * na hora de baixar; PDFs originais mantêm o conteúdo). Ex: "...-1261.pdf"
+ */
+export function nomeArquivoPdf(e: Evento): string {
+  return nomeArquivoFoto(e).replace(/\.(jpe?g|pdf)$/i, "") + ".pdf";
+}
+
 export const TIPO_PAGAMENTO_LABEL: Record<string, string> = {
   debito: "Débito",
   credito: "Crédito",

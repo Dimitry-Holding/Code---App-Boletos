@@ -8,7 +8,7 @@ import { createClient } from "@/lib/supabase/client";
 import {
   type Evento,
   codigoId,
-  nomeArquivoFoto,
+  nomeArquivoPdf,
   valorBRL,
   COLUNAS_EXCEL,
   TIPO_PAGAMENTO_LABEL,
@@ -213,7 +213,16 @@ export default function AdminApp({
     URL.revokeObjectURL(url);
   }
 
-  /** Descarga una foto con el nombre Fornecedor-Data-Valor-Cartao. */
+  /**
+   * Devuelve el archivo SIEMPRE como PDF: si ya es PDF, lo deja igual; si es
+   * una foto (JPG), la convierte a un PDF de 1 página (la imagen entera dentro).
+   */
+  async function comoPdf(ev: Evento, blob: Blob): Promise<Blob> {
+    if (ev.foto_path.toLowerCase().endsWith(".pdf")) return blob;
+    return imagemBlobParaPdf(blob);
+  }
+
+  /** Descarga una foto (convertida a PDF). */
   async function baixarFoto(ev: Evento) {
     const { data, error } = await supabase.storage
       .from("notas")
@@ -222,10 +231,15 @@ export default function AdminApp({
       alert("Não foi possível baixar a foto.");
       return;
     }
-    descargarBlob(data, nomeArquivoFoto(ev));
+    try {
+      const pdf = await comoPdf(ev, data);
+      descargarBlob(pdf, nomeArquivoPdf(ev));
+    } catch {
+      alert("Não foi possível gerar o PDF.");
+    }
   }
 
-  /** Descarga en un único ZIP las fotos de la lista indicada. */
+  /** Descarga en un único ZIP todas las notas, cada una como PDF. */
   async function baixarZip(lista: Evento[], nomeArquivo: string) {
     if (lista.length === 0) return;
     setBaixando(`0/${lista.length}`);
@@ -241,13 +255,14 @@ export default function AdminApp({
         setBaixando(`${i}/${lista.length}`);
         const { data } = await supabase.storage.from("notas").download(ev.foto_path);
         if (!data) continue;
-        let nome = nomeArquivoFoto(ev);
+        const pdf = await comoPdf(ev, data);
+        let nome = nomeArquivoPdf(ev);
         if (usados.has(nome)) {
           const punto = nome.lastIndexOf(".");
           nome = `${nome.slice(0, punto)}-${ev.id}${nome.slice(punto)}`;
         }
         usados.add(nome);
-        zip.file(nome, data, { date: dataLocal });
+        zip.file(nome, pdf, { date: dataLocal });
       }
       const blob = await zip.generateAsync({ type: "blob" });
       descargarBlob(blob, nomeArquivo);
@@ -298,7 +313,7 @@ export default function AdminApp({
               onClick={() => baixarZip(selecionadasList, "fotos_selecionadas.zip")}
               disabled={baixando !== null}
             >
-              📷 Selecionadas ({selecionadasList.length})
+              📄 Selecionadas ({selecionadasList.length})
             </button>
           )}
           <button
@@ -306,7 +321,7 @@ export default function AdminApp({
             onClick={() => baixarZip(filtrados, `fotos_${inicio}_a_${fim}.zip`)}
             disabled={filtrados.length === 0 || baixando !== null}
           >
-            {baixando ? `📷 ${baixando}…` : "📷 Fotos (ZIP)"}
+            {baixando ? `📄 ${baixando}…` : "📄 PDFs (ZIP)"}
           </button>
           <button
             className="btn btn-primary"
@@ -490,4 +505,34 @@ export default function AdminApp({
       </main>
     </>
   );
+}
+
+/**
+ * Converte uma imagem (blob JPG) em um PDF de 1 página, com a página do
+ * tamanho exato da foto (sem margens nem distorção). Roda no navegador.
+ * O jsPDF é carregado sob demanda (só quando se baixa algo).
+ */
+async function imagemBlobParaPdf(blob: Blob): Promise<Blob> {
+  const { jsPDF } = await import("jspdf");
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result as string);
+    fr.onerror = () => reject(new Error("Falha ao ler a imagem."));
+    fr.readAsDataURL(blob);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => reject(new Error("Falha ao carregar a imagem."));
+    im.src = dataUrl;
+  });
+  const w = img.naturalWidth || 1240;
+  const h = img.naturalHeight || 1754;
+  const pdf = new jsPDF({
+    orientation: w >= h ? "landscape" : "portrait",
+    unit: "px",
+    format: [w, h],
+  });
+  pdf.addImage(dataUrl, "JPEG", 0, 0, w, h);
+  return pdf.output("blob");
 }
