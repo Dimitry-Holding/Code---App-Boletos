@@ -124,15 +124,40 @@ export function montarLinhasNibo(
     return a.id - b.id;
   });
 
+  // possíveis duplicatas (mesmo usuário, fornecedor, data, valor e cartão):
+  // a primeira fica SIM; as demais saem com Enviar = NÃO e um aviso.
+  const vistos = new Map<string, EventoNomeado>();
+  const duplicataDe = new Map<number, number>();
+  for (const e of ordenados) {
+    const chave = [
+      e.conductor_id,
+      normalizarNome(e.fornecedor ?? ""),
+      e.data_documento ?? "",
+      Math.round(valorBRL(e) * 100),
+      e.ultimos4 ?? "",
+    ].join("|");
+    const primeiro = vistos.get(chave);
+    if (primeiro && normalizarNome(e.fornecedor ?? "") !== "") {
+      duplicataDe.set(e.id, primeiro.id);
+    } else {
+      vistos.set(chave, e);
+    }
+  }
+
   return ordenados.map((e, i) => {
+    const original = duplicataDe.get(e.id);
     const cartao =
       porUsuarioEDigitos.get(`${e.conductor_id}|${e.ultimos4 ?? ""}`) ??
       porDigitos.get(e.ultimos4 ?? "");
     const diaVenc = cartao?.dia_vencimento ?? 0;
-    const descricao = [e.fornecedor, e.descricao].filter(Boolean).join(" — ");
+    const aviso = original
+      ? `[POSSÍVEL DUPLICATA de ${codigoId(original)} — conferir] `
+      : "";
+    const descricao =
+      aviso + [e.fornecedor, e.descricao].filter(Boolean).join(" — ");
     return {
       ["Lançamento"]: "L" + String(i + 1).padStart(3, "0"),
-      ["Enviar"]: "SIM",
+      ["Enviar"]: original ? "NÃO" : "SIM",
       ["Cartão"]: cartao
         ? nomeCartaoNibo(cartao)
         : e.ultimos4
@@ -168,6 +193,8 @@ const INSTRUCOES: string[][] = [
   ["   casou com nenhuma: escolha a categoria certa na lista e copie aqui."],
   ["4. 'Centro de custo (Nibo)': escreva o nome exato como está no Nibo."],
   ["5. 'Enviar': deixe SIM para lançar; mude para NÃO para pular a linha."],
+  ["   Possíveis DUPLICATAS (mesmo fornecedor, data, valor e cartão) já saem com"],
+  ["   Enviar = NÃO e aviso na descrição — confira e mude para SIM se não for duplicata."],
   ["6. Confira as datas! Notas com data errada (ex.: ano de 2018 lido errado pela IA)"],
   ["   devem ser corrigidas aqui — o script recusa datas fora do intervalo plausível."],
   [""],
