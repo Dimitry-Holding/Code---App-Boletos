@@ -46,6 +46,12 @@ Regras:
 - "valor": valor total pago, número decimal (ex: 1234.56). Se não houver, 0.
 - "moeda": normalmente "BRL".
 - "data_documento": data do documento em YYYY-MM-DD. Se não aparecer, "".
+  ATENÇÃO ao formato brasileiro: as datas vêm como DIA/MÊS/ANO (ex: 14/07/26,
+  18.06.26, 22/07/2026). Ano com 2 dígitos significa 20XX (26 = 2026, NUNCA
+  2020 nem 2018). "18.06.26-21:46" é 18 de junho de 2026 às 21:46, ou seja,
+  2026-06-18. São compras recentes: o ano correto é quase sempre o atual;
+  nunca devolva data no futuro. Ignore outras datas do cupom (validade,
+  vencimento de promoção) — use a data da COMPRA/emissão.
 - "tipo_pagamento": "debito" ou "credito" conforme o cupom. Se não der para saber, "debito".
 - "ultimos4": os últimos 4 dígitos do cartão, se aparecerem. "" se não aparecer.
 - "descricao": resumo curto (uma frase) da compra.
@@ -256,17 +262,38 @@ function parseValor(v: unknown): number {
   return isFinite(n) ? n : 0;
 }
 
+/**
+ * Valida a data extraída: formato YYYY-MM-DD e dentro de uma janela plausível
+ * (compras de até ~13 meses atrás; nunca no futuro). Datas fora disso são um
+ * sintoma clássico de leitura errada do ano (ex: "02/07/26" virar 2020-07-02),
+ * então devolvemos "" para o usuário preencher a data certa na revisão.
+ */
+function validarData(s: string): string {
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return "";
+  const d = new Date(`${s}T12:00:00Z`);
+  if (isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return "";
+  const hoje = new Date();
+  const minima = new Date(hoje.getTime() - 400 * 24 * 60 * 60 * 1000);
+  const maxima = new Date(hoje.getTime() + 24 * 60 * 60 * 1000);
+  if (d < minima || d > maxima) return "";
+  return s;
+}
+
 function normalizar(
   o: Record<string, unknown>,
   categorias: string[],
 ): Extraccion {
   const cat = comoTexto(o.categoria);
   const tipo = comoTexto(o.tipo_pagamento).toLowerCase();
+  const dataBruta = comoTexto(o.data_documento);
+  const data = validarData(dataBruta);
+  const dataRejeitada = dataBruta !== "" && data === "";
   return {
     fornecedor: comoTexto(o.fornecedor),
     valor: parseValor(o.valor),
     moeda: comoTexto(o.moeda) || "BRL",
-    data_documento: comoTexto(o.data_documento),
+    data_documento: data,
     // Solo aceptamos categorías que estén en la lista del usuario.
     categoria: categorias.includes(cat) ? cat : "",
     tipo_pagamento: (TIPOS_PAGO.includes(tipo)
@@ -274,8 +301,11 @@ function normalizar(
       : "debito") as Extraccion["tipo_pagamento"],
     ultimos4: comoTexto(o.ultimos4).replace(/\D/g, "").slice(-4),
     descricao: comoTexto(o.descricao),
-    confianca: (CONFIANZAS.includes(comoTexto(o.confianca))
-      ? comoTexto(o.confianca)
-      : "media") as Extraccion["confianca"],
+    // Data rejeitada = leitura suspeita: baixamos a confiança para o usuário conferir.
+    confianca: (dataRejeitada
+      ? "baixa"
+      : CONFIANZAS.includes(comoTexto(o.confianca))
+        ? comoTexto(o.confianca)
+        : "media") as Extraccion["confianca"],
   };
 }
