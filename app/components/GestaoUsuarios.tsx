@@ -42,6 +42,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
   const [escopo, setEscopo] = useState<Set<string>>(new Set());
   const [apelido, setApelido] = useState("");
   const [last4, setLast4] = useState("");
+  const [diaVenc, setDiaVenc] = useState("");
   const [catBulk, setCatBulk] = useState("");
   const [centroBulk, setCentroBulk] = useState("");
 
@@ -107,6 +108,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
     setExpandido(u);
     setApelido("");
     setLast4("");
+    setDiaVenc("");
     setCatBulk("");
     setCentroBulk("");
     await cargarDetalle(u);
@@ -138,12 +140,41 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
       setErro("Os últimos 4 dígitos devem ter 4 números.");
       return;
     }
-    const { error } = await supabase
-      .from("cartoes")
-      .insert({ user_id: u.id, ultimos4: dig, apelido: apelido.trim() || null });
+    const dia = Number(diaVenc);
+    if (diaVenc && (!Number.isInteger(dia) || dia < 1 || dia > 31)) {
+      setErro("O dia de vencimento deve ser um número de 1 a 31.");
+      return;
+    }
+    const { error } = await supabase.from("cartoes").insert({
+      user_id: u.id,
+      ultimos4: dig,
+      apelido: apelido.trim() || null,
+      dia_vencimento: diaVenc ? dia : null,
+    });
     if (error) return setErro("Erro ao adicionar cartão: " + error.message);
     setApelido("");
     setLast4("");
+    setDiaVenc("");
+    await cargarDetalle(u);
+  }
+
+  /** Define/atualiza o dia de vencimento da fatura de um cartão existente. */
+  async function editarVencimento(u: Usuario, c: Cartao) {
+    const resp = prompt(
+      `Dia do mês em que vence a fatura do cartão ${labelCartao(c)} (1 a 31, vazio para limpar):`,
+      c.dia_vencimento ? String(c.dia_vencimento) : "",
+    );
+    if (resp === null) return;
+    const dia = Number(resp);
+    if (resp !== "" && (!Number.isInteger(dia) || dia < 1 || dia > 31)) {
+      setErro("O dia de vencimento deve ser um número de 1 a 31.");
+      return;
+    }
+    const { error } = await supabase
+      .from("cartoes")
+      .update({ dia_vencimento: resp === "" ? null : dia })
+      .eq("id", c.id);
+    if (error) return setErro("Erro ao atualizar vencimento: " + error.message);
     await cargarDetalle(u);
   }
   async function removeCartao(u: Usuario, id: number) {
@@ -283,8 +314,22 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                         <div style={{ marginTop: 6 }}>
                           {cartoes.map((c) => (
                             <div key={c.id} className="row" style={{ padding: "4px 0" }}>
-                              <span>{labelCartao(c)}</span>
+                              <span>
+                                {labelCartao(c)}{" "}
+                                <span className="note" style={{ margin: 0 }}>
+                                  {c.dia_vencimento
+                                    ? `(vence dia ${c.dia_vencimento})`
+                                    : "(sem vencimento)"}
+                                </span>
+                              </span>
                               <span className="spacer" />
+                              <button
+                                className="btn-ghost"
+                                title="Dia de vencimento da fatura"
+                                onClick={() => editarVencimento(u, c)}
+                              >
+                                📅
+                              </button>
                               <button className="btn-ghost" onClick={() => removeCartao(u, c.id)}>✕</button>
                             </div>
                           ))}
@@ -299,6 +344,16 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                           <label>Últimos 4</label>
                           <input inputMode="numeric" maxLength={4} value={last4} onChange={(e) => setLast4(e.target.value)} />
                         </div>
+                      </div>
+                      <div className="field" style={{ marginTop: 6 }}>
+                        <label>Dia de vencimento da fatura (1–31, opcional)</label>
+                        <input
+                          inputMode="numeric"
+                          maxLength={2}
+                          placeholder="ex: 15"
+                          value={diaVenc}
+                          onChange={(e) => setDiaVenc(e.target.value.replace(/\D/g, ""))}
+                        />
                       </div>
                       <button className="btn btn-light btn-block" style={{ marginTop: 8 }} onClick={() => addCartao(u)}>
                         + Adicionar cartão

@@ -1,28 +1,30 @@
 import * as XLSX from "xlsx";
-import { type Evento, codigoId, valorBRL } from "./evento";
+import { type Evento, type Cartao, codigoId, valorBRL } from "./evento";
+import CATEGORIAS_NIBO from "../nibo/categorias-nibo.json";
 
 /**
  * Exportação "Excel Nibo": tabula as notas no formato dos lançamentos que
  * serão criados no Nibo, para revisão humana ANTES do envio pela API
  * (script `nibo/lancar-nibo.bat`).
  *
- * Regras de composição de um lançamento (definidas pela administração):
- *   I   — 1 partida:   1 centro de custo, 1 categoria
- *   II  — 2+ partidas: 1 centro de custo, 2+ categorias
- *   III — 2+ partidas: 2+ centros de custo, 1 categoria
- * NUNCA pode haver 2+ centros de custo E 2+ categorias no mesmo lançamento.
+ * - Cada nota é UM lançamento (únicos; a pessoa pode juntar linhas editando
+ *   a coluna "Lançamento", respeitando as regras I/II/III do script).
+ * - O "fornecedor" do lançamento no Nibo é o CARTÃO em que o gasto foi feito.
+ * - "Vencimento" = data de vencimento da fatura do cartão no mês da compra;
+ *   compra depois do dia de vencimento cai na fatura do mês seguinte.
+ * - "Categoria (Nibo)" só vem preenchida quando o nome do app casa com uma
+ *   categoria EXISTENTE no Nibo (lista em `nibo/categorias-nibo.json`);
+ *   caso contrário fica vazia para a pessoa escolher na aba CategoriasNibo.
  */
 
 export type EventoNomeado = Evento & { conductor_nome?: string };
 
-/** Uma linha (partida) da planilha de conferência. */
 export type LinhaNibo = {
   ["Lançamento"]: string;
-  ["Tipo"]: "I" | "II" | "III";
   ["Enviar"]: "SIM" | "NÃO";
-  ["Fornecedor"]: string;
-  ["CNPJ/CPF"]: string;
+  ["Cartão"]: string;
   ["Data"]: string;
+  ["Vencimento"]: string;
   ["Valor (R$)"]: number;
   ["Categoria (app)"]: string;
   ["Categoria (Nibo)"]: string;
@@ -31,141 +33,176 @@ export type LinhaNibo = {
   ["Descrição"]: string;
   ["Nota"]: string;
   ["Usuário"]: string;
-  ["Cartão"]: string;
 };
 
 export const COLUNAS_NIBO: (keyof LinhaNibo)[] = [
-  "Lançamento", "Tipo", "Enviar", "Fornecedor", "CNPJ/CPF", "Data",
-  "Valor (R$)", "Categoria (app)", "Categoria (Nibo)",
+  "Lançamento", "Enviar", "Cartão", "Data", "Vencimento", "Valor (R$)",
+  "Categoria (app)", "Categoria (Nibo)",
   "Centro de custo (app)", "Centro de custo (Nibo)",
-  "Descrição", "Nota", "Usuário", "Cartão",
+  "Descrição", "Nota", "Usuário",
 ];
 
-/** Notas do mesmo fornecedor, mesma data e mesmo cartão viram um lançamento. */
-function chaveGrupo(e: Evento): string {
-  return [
-    (e.fornecedor ?? "").trim().toUpperCase(),
-    e.data_documento ?? "",
-    e.ultimos4 ?? "",
-  ].join("|");
+/** Normaliza para comparação: sem acentos, minúsculas, espaços simples. */
+export function normalizarNome(s: string): string {
+  return (s ?? "")
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function tipoLancamento(grupo: Evento[]): "I" | "II" | "III" {
-  if (grupo.length === 1) return "I";
-  const centros = new Set(grupo.map((e) => e.centro_custo ?? ""));
-  return centros.size === 1 ? "II" : "III";
+/** Nomes do app que diferem dos do Nibo (além de acento/caixa). */
+const APELIDOS_CATEGORIA: Record<string, string> = {
+  "servico de trasporte": "Servico de Transporte",
+  "despesa com alimentacao": "Despesa com Alimentacao",
+  "doacao, presente e cortesia": "Doacao, Brinde e Cortesia",
+};
+
+const CATALOGO_NIBO = new Map(
+  (CATEGORIAS_NIBO as string[]).map((n) => [normalizarNome(n), n]),
+);
+
+/** Categoria do Nibo correspondente ao nome do app ("" se não existir). */
+export function categoriaNibo(categoriaApp: string): string {
+  const chave = normalizarNome(categoriaApp);
+  if (!chave) return "";
+  const apelido = APELIDOS_CATEGORIA[chave];
+  if (apelido) return CATALOGO_NIBO.get(normalizarNome(apelido)) ?? apelido;
+  return CATALOGO_NIBO.get(chave) ?? "";
+}
+
+/** Último dia do mês (mes 1-12). */
+function ultimoDiaDoMes(ano: number, mes: number): number {
+  return new Date(ano, mes, 0).getDate();
 }
 
 /**
- * Propõe o agrupamento das notas em lançamentos válidos.
- * Grupos que violariam a regra de ouro (2+ centros E 2+ categorias) são
- * subdivididos por centro de custo, para que cada lançamento seja válido.
+ * Vencimento da fatura para uma compra: o dia de vencimento do cartão no mês
+ * da compra; se a compra foi DEPOIS do dia de vencimento, vai para o mês
+ * seguinte. Ex.: vencimento dia 15, compra 16/03 → 15/04.
  */
-export function proporLancamentos(eventos: EventoNomeado[]): LinhaNibo[] {
-  const grupos = new Map<string, EventoNomeado[]>();
-  for (const e of eventos) {
-    const k = chaveGrupo(e);
-    const g = grupos.get(k);
-    if (g) g.push(e);
-    else grupos.set(k, [e]);
-  }
-
-  const lancamentos: EventoNomeado[][] = [];
-  for (const grupo of grupos.values()) {
-    const centros = new Set(grupo.map((e) => e.centro_custo ?? ""));
-    const categorias = new Set(grupo.map((e) => e.categoria ?? ""));
-    if (centros.size > 1 && categorias.size > 1) {
-      const porCentro = new Map<string, EventoNomeado[]>();
-      for (const e of grupo) {
-        const c = e.centro_custo ?? "";
-        const sub = porCentro.get(c);
-        if (sub) sub.push(e);
-        else porCentro.set(c, [e]);
-      }
-      lancamentos.push(...porCentro.values());
-    } else {
-      lancamentos.push(grupo);
+export function vencimentoFatura(dataCompra: string, diaVencimento: number): string {
+  const m = dataCompra.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!m || !diaVencimento) return "";
+  let ano = Number(m[1]);
+  let mes = Number(m[2]);
+  const dia = Number(m[3]);
+  if (dia > diaVencimento) {
+    mes += 1;
+    if (mes > 12) {
+      mes = 1;
+      ano += 1;
     }
   }
+  const diaFinal = Math.min(diaVencimento, ultimoDiaDoMes(ano, mes));
+  return `${ano}-${String(mes).padStart(2, "0")}-${String(diaFinal).padStart(2, "0")}`;
+}
 
-  lancamentos.sort((a, b) => {
-    const da = a[0].data_documento ?? "";
-    const db = b[0].data_documento ?? "";
+/** Nome do cartão para o Nibo (ex.: "Santander 5765"). */
+export function nomeCartaoNibo(c: Pick<Cartao, "apelido" | "ultimos4">): string {
+  return `${(c.apelido ?? "").trim()} ${c.ultimos4}`.trim() || `Cartao ${c.ultimos4}`;
+}
+
+/** Monta as linhas da planilha: uma nota = um lançamento (únicos). */
+export function montarLinhasNibo(
+  eventos: EventoNomeado[],
+  cartoes: Cartao[],
+): LinhaNibo[] {
+  // cartão por usuário+últimos4 (com reserva por últimos4 apenas)
+  const porUsuarioEDigitos = new Map<string, Cartao>();
+  const porDigitos = new Map<string, Cartao>();
+  for (const c of cartoes) {
+    porUsuarioEDigitos.set(`${c.user_id}|${c.ultimos4}`, c);
+    if (!porDigitos.has(c.ultimos4)) porDigitos.set(c.ultimos4, c);
+  }
+
+  const ordenados = [...eventos].sort((a, b) => {
+    const da = a.data_documento ?? "";
+    const db = b.data_documento ?? "";
     if (da !== db) return da < db ? -1 : 1;
-    const fa = (a[0].fornecedor ?? "").toUpperCase();
-    const fb = (b[0].fornecedor ?? "").toUpperCase();
-    return fa < fb ? -1 : fa > fb ? 1 : 0;
+    return a.id - b.id;
   });
 
-  const linhas: LinhaNibo[] = [];
-  lancamentos.forEach((grupo, i) => {
-    const num = "L" + String(i + 1).padStart(3, "0");
-    const tipo = tipoLancamento(grupo);
-    for (const e of grupo) {
-      linhas.push({
-        ["Lançamento"]: num,
-        ["Tipo"]: tipo,
-        ["Enviar"]: "SIM",
-        ["Fornecedor"]: e.fornecedor ?? "",
-        ["CNPJ/CPF"]: "",
-        ["Data"]: e.data_documento ?? "",
-        ["Valor (R$)"]: Math.round(valorBRL(e) * 100) / 100,
-        ["Categoria (app)"]: e.categoria ?? "",
-        ["Categoria (Nibo)"]: e.categoria ?? "",
-        ["Centro de custo (app)"]: e.centro_custo ?? "",
-        ["Centro de custo (Nibo)"]: e.centro_custo ?? "",
-        ["Descrição"]: e.descricao ?? "",
-        ["Nota"]: codigoId(e.id),
-        ["Usuário"]: e.conductor_nome ?? "",
-        ["Cartão"]: e.ultimos4 ?? "",
-      });
-    }
+  return ordenados.map((e, i) => {
+    const cartao =
+      porUsuarioEDigitos.get(`${e.conductor_id}|${e.ultimos4 ?? ""}`) ??
+      porDigitos.get(e.ultimos4 ?? "");
+    const diaVenc = cartao?.dia_vencimento ?? 0;
+    const descricao = [e.fornecedor, e.descricao].filter(Boolean).join(" — ");
+    return {
+      ["Lançamento"]: "L" + String(i + 1).padStart(3, "0"),
+      ["Enviar"]: "SIM",
+      ["Cartão"]: cartao
+        ? nomeCartaoNibo(cartao)
+        : e.ultimos4
+          ? `Cartao ${e.ultimos4}`
+          : "",
+      ["Data"]: e.data_documento ?? "",
+      ["Vencimento"]: e.data_documento
+        ? vencimentoFatura(e.data_documento, diaVenc)
+        : "",
+      ["Valor (R$)"]: Math.round(valorBRL(e) * 100) / 100,
+      ["Categoria (app)"]: e.categoria ?? "",
+      ["Categoria (Nibo)"]: categoriaNibo(e.categoria ?? ""),
+      ["Centro de custo (app)"]: e.centro_custo ?? "",
+      ["Centro de custo (Nibo)"]: e.centro_custo ?? "",
+      ["Descrição"]: descricao,
+      ["Nota"]: codigoId(e.id),
+      ["Usuário"]: e.conductor_nome ?? "",
+    };
   });
-  return linhas;
 }
 
 const INSTRUCOES: string[][] = [
   ["COMO REVISAR ESTA PLANILHA (antes de lançar no Nibo)"],
   [""],
-  ["1. Cada linha da aba 'Lancamentos' é uma PARTIDA. Linhas com o mesmo código na"],
-  ["   coluna 'Lançamento' (ex.: L001) serão enviadas juntas como UM lançamento no Nibo."],
-  ["2. O agrupamento é uma PROPOSTA (notas do mesmo fornecedor, data e cartão)."],
-  ["   Pode ajustar: mude o código da coluna 'Lançamento' para juntar ou separar linhas."],
-  ["3. Colunas 'Categoria (Nibo)' e 'Centro de custo (Nibo)': escreva o nome EXATO"],
-  ["   como está cadastrado no Nibo (os nomes do app podem ser diferentes)."],
-  ["   As colunas '(app)' são só referência — não são enviadas."],
-  ["4. 'Enviar': deixe SIM para lançar; mude para NÃO para pular a linha."],
-  ["5. 'CNPJ/CPF' (opcional): se preenchido, é usado ao criar o fornecedor no Nibo."],
-  ["   Somente números (14 dígitos = CNPJ, 11 = CPF)."],
-  ["6. 'Data' no formato AAAA-MM-DD. 'Valor (R$)' sempre em reais."],
+  ["1. Cada linha é UM lançamento (únicos). No Nibo, o 'fornecedor' do lançamento"],
+  ["   é o CARTÃO em que o gasto foi feito (coluna 'Cartão')."],
+  ["2. 'Vencimento' é a data da fatura do cartão em que a compra cai (compra depois"],
+  ["   do dia de vencimento vai para o mês seguinte). Se estiver vazia, o cartão está"],
+  ["   sem dia de vencimento cadastrado no app (tela 👥 Usuários) — preencha aqui ou lá."],
+  ["   No Nibo: data de vencimento/agendamento = 'Vencimento'; competência = 'Data'."],
+  ["3. 'Categoria (Nibo)': só aceita categorias que EXISTEM no Nibo — a lista completa"],
+  ["   está na aba 'CategoriasNibo'. Quando vier vazia, é porque o nome do app não"],
+  ["   casou com nenhuma: escolha a categoria certa na lista e copie aqui."],
+  ["4. 'Centro de custo (Nibo)': escreva o nome exato como está no Nibo."],
+  ["5. 'Enviar': deixe SIM para lançar; mude para NÃO para pular a linha."],
+  ["6. Confira as datas! Notas com data errada (ex.: ano de 2018 lido errado pela IA)"],
+  ["   devem ser corrigidas aqui — o script recusa datas fora do intervalo plausível."],
   [""],
-  ["REGRAS DE UM LANÇAMENTO (o script recusa o que violar):"],
-  ["  Tipo I   — 1 partida:   1 centro de custo e 1 categoria"],
-  ["  Tipo II  — 2+ partidas: 1 centro de custo e 2+ categorias"],
-  ["  Tipo III — 2+ partidas: 2+ centros de custo e 1 categoria"],
+  ["JUNTAR LINHAS NUM LANÇAMENTO SÓ (opcional): repita o mesmo código na coluna"],
+  ["'Lançamento'. Regras que o script exige num lançamento com várias partidas:"],
+  ["  mesmo cartão, mesma data e mesmo vencimento em todas as linhas;"],
+  ["  ou 1 centro de custo com 2+ categorias, ou 2+ centros com 1 categoria;"],
   ["  PROIBIDO: 2+ centros de custo E 2+ categorias no mesmo lançamento."],
-  ["  Todas as partidas de um lançamento devem ter o mesmo fornecedor e a mesma data."],
   [""],
-  ["DEPOIS DE REVISAR:"],
-  ["  Salve o arquivo e execute nibo\\lancar-nibo.bat (na pasta do projeto)."],
-  ["  O script primeiro CONFERE tudo (sem enviar nada) e mostra o que faria."],
-  ["  O envio real só acontece no modo 'ENVIAR', com confirmação digitada."],
+  ["DEPOIS DE REVISAR: salve e execute nibo\\lancar-nibo.bat (CONFERIR antes de ENVIAR)."],
 ];
 
-/** Monta o arquivo Excel de conferência (abas Lancamentos + Instrucoes). */
-export function gerarWorkbookNibo(eventos: EventoNomeado[]): XLSX.WorkBook {
-  const linhas = proporLancamentos(eventos);
+/** Monta o arquivo Excel de conferência. */
+export function gerarWorkbookNibo(
+  eventos: EventoNomeado[],
+  cartoes: Cartao[],
+): XLSX.WorkBook {
+  const linhas = montarLinhasNibo(eventos, cartoes);
   const ws = XLSX.utils.json_to_sheet(linhas, { header: COLUNAS_NIBO as string[] });
   ws["!cols"] = COLUNAS_NIBO.map((c) => ({
-    wch: Math.max(
-      c.length + 2,
-      c === "Fornecedor" || c === "Descrição" ? 32 : 12,
-    ),
+    wch: Math.max(c.length + 2, c === "Descrição" ? 40 : c === "Cartão" ? 18 : 12),
   }));
+
   const wsInstr = XLSX.utils.aoa_to_sheet(INSTRUCOES);
   wsInstr["!cols"] = [{ wch: 95 }];
+
+  const wsCats = XLSX.utils.aoa_to_sheet([
+    ["Categorias existentes no Nibo (copie o nome exato para a coluna 'Categoria (Nibo)')"],
+    ...(CATEGORIAS_NIBO as string[]).map((n) => [n]),
+  ]);
+  wsCats["!cols"] = [{ wch: 55 }];
+
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Lancamentos");
   XLSX.utils.book_append_sheet(wb, wsInstr, "Instrucoes");
+  XLSX.utils.book_append_sheet(wb, wsCats, "CategoriasNibo");
   return wb;
 }

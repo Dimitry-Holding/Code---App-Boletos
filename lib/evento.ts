@@ -55,6 +55,8 @@ export type Cartao = {
   user_id: string;
   ultimos4: string;
   apelido: string | null;
+  /** Dia do mês em que vence a fatura (1–31); usado no Excel Nibo. */
+  dia_vencimento: number | null;
 };
 
 /** Categoría asignada a un usuario. */

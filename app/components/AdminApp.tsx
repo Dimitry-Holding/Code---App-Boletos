@@ -6,6 +6,7 @@ import * as XLSX from "xlsx";
 import JSZip from "jszip";
 import { createClient } from "@/lib/supabase/client";
 import {
+  type Cartao,
   type Evento,
   codigoId,
   nomeArquivoPdf,
@@ -36,6 +37,7 @@ export default function AdminApp({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const [eventos, setEventos] = useState<Evento[]>([]);
+  const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [perfiles, setPerfiles] = useState<Record<string, string>>({});
   const [cargando, setCargando] = useState(true);
 
@@ -52,11 +54,13 @@ export default function AdminApp({
 
   useEffect(() => {
     (async () => {
-      const [{ data: evs }, { data: profs }] = await Promise.all([
+      const [{ data: evs }, { data: profs }, { data: cts }] = await Promise.all([
         supabase.from("eventos").select("*").order("id", { ascending: false }),
         supabase.from("profiles").select("id, nome"),
+        supabase.from("cartoes").select("*"),
       ]);
       setEventos((evs as Evento[]) ?? []);
+      setCartoes((cts as Cartao[]) ?? []);
       const mapa: Record<string, string> = {};
       ((profs as Perfil[]) ?? []).forEach((p) => (mapa[p.id] = p.nome));
       setPerfiles(mapa);
@@ -202,6 +206,7 @@ export default function AdminApp({
         ...e,
         conductor_nome: perfiles[e.conductor_id] ?? "",
       })),
+      cartoes,
     );
     XLSX.writeFile(wb, `nibo_lancamentos_${inicio}_a_${fim}.xlsx`);
   }

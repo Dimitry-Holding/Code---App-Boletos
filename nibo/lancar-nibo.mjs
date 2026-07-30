@@ -24,9 +24,19 @@ import { fileURLToPath } from "node:url";
 
 const require = createRequire(import.meta.url);
 const XLSX = require("xlsx");
+// categorias EXISTENTES no Nibo (mesma lista usada pelo app na aba CategoriasNibo)
+let CATEGORIAS_NIBO = [];
+try {
+  CATEGORIAS_NIBO = require("./categorias-nibo.json");
+} catch {
+  /* sem a lista, a conferência offline de categorias é pulada */
+}
 
 const BASE = "https://api.nibo.com.br/empresas/v1";
 const TOKEN = (process.env.NIBO_APITOKEN || "").trim();
+
+// intervalo plausível para a DATA da compra (pega erros de leitura da IA, ex. ano 2018)
+const DATA_MINIMA = "2025-01-01";
 
 // ---------- utilidades ----------
 
@@ -148,6 +158,11 @@ function lerLancamentos(arquivo) {
   if (!ws) throw new Error(`A aba "Lancamentos" não existe em ${arquivo}`);
   const linhas = XLSX.utils.sheet_to_json(ws, { defval: "" });
 
+  const hoje = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 10);
+  const catalogo = new Set(CATEGORIAS_NIBO.map((c) => normalizar(c)));
+
   const erros = [];
   const grupos = new Map();
   linhas.forEach((l, i) => {
@@ -157,9 +172,9 @@ function lerLancamentos(arquivo) {
     const partida = {
       linha: n,
       lancamento: String(l["Lançamento"] ?? l["Lancamento"] ?? "").trim(),
-      fornecedor: String(l["Fornecedor"] ?? "").trim(),
-      documento: String(l["CNPJ/CPF"] ?? "").replace(/\D/g, ""),
+      cartao: String(l["Cartão"] ?? l["Cartao"] ?? "").trim(),
       data: parseData(l["Data"]),
+      vencimento: parseData(l["Vencimento"]),
       valor: parseValor(l["Valor (R$)"]),
       categoria: String(l["Categoria (Nibo)"] ?? "").trim(),
       centro: String(l["Centro de custo (Nibo)"] ?? "").trim(),
@@ -167,13 +182,22 @@ function lerLancamentos(arquivo) {
       nota: String(l["Nota"] ?? "").trim(),
     };
     if (!partida.lancamento) erros.push(`Linha ${n}: coluna "Lançamento" vazia.`);
-    if (!partida.fornecedor) erros.push(`Linha ${n}: "Fornecedor" vazio.`);
+    if (!partida.cartao) erros.push(`Linha ${n}: "Cartão" vazio (é o fornecedor do lançamento no Nibo).`);
     if (!partida.data) erros.push(`Linha ${n}: "Data" vazia ou inválida (use AAAA-MM-DD).`);
+    else if (partida.data < DATA_MINIMA || partida.data > hoje)
+      erros.push(
+        `Linha ${n}: "Data" ${partida.data} fora do intervalo plausível (${DATA_MINIMA} até hoje). ` +
+          `Confira a data da nota${partida.nota ? ` ${partida.nota}` : ""} e corrija.`,
+      );
+    if (!partida.vencimento)
+      erros.push(`Linha ${n}: "Vencimento" vazio ou inválido — cadastre o dia de vencimento do cartão no app ou preencha aqui.`);
+    else if (partida.data && partida.vencimento < partida.data)
+      erros.push(`Linha ${n}: "Vencimento" (${partida.vencimento}) anterior à "Data" da compra (${partida.data}).`);
     if (!(partida.valor > 0)) erros.push(`Linha ${n}: "Valor (R$)" inválido.`);
-    if (!partida.categoria) erros.push(`Linha ${n}: "Categoria (Nibo)" vazia.`);
+    if (!partida.categoria) erros.push(`Linha ${n}: "Categoria (Nibo)" vazia — escolha uma da aba CategoriasNibo.`);
+    else if (catalogo.size && !catalogo.has(normalizar(partida.categoria)))
+      erros.push(`Linha ${n}: categoria "${partida.categoria}" NÃO existe no Nibo — use um nome da aba CategoriasNibo.`);
     if (!partida.centro) erros.push(`Linha ${n}: "Centro de custo (Nibo)" vazio.`);
-    if (partida.documento && ![11, 14].includes(partida.documento.length))
-      erros.push(`Linha ${n}: "CNPJ/CPF" deve ter 11 (CPF) ou 14 (CNPJ) dígitos.`);
     const g = grupos.get(partida.lancamento);
     if (g) g.push(partida);
     else grupos.set(partida.lancamento, [partida]);
@@ -184,17 +208,20 @@ function lerLancamentos(arquivo) {
   for (const [codigo, partidas] of grupos) {
     const cats = new Set(partidas.map((p) => normalizar(p.categoria)));
     const centros = new Set(partidas.map((p) => normalizar(p.centro)));
-    const fornecedores = new Set(partidas.map((p) => normalizar(p.fornecedor)));
+    const cartoes = new Set(partidas.map((p) => normalizar(p.cartao)));
     const datas = new Set(partidas.map((p) => p.data));
+    const vencimentos = new Set(partidas.map((p) => p.vencimento));
     if (cats.size > 1 && centros.size > 1)
       erros.push(
         `Lançamento ${codigo}: PROIBIDO — tem ${centros.size} centros de custo E ${cats.size} categorias. ` +
           `Separe em lançamentos diferentes (ou fixe 1 centro, ou fixe 1 categoria).`,
       );
-    if (fornecedores.size > 1)
-      erros.push(`Lançamento ${codigo}: partidas com fornecedores diferentes — devem ser o mesmo.`);
+    if (cartoes.size > 1)
+      erros.push(`Lançamento ${codigo}: partidas com cartões diferentes — devem ser o mesmo.`);
     if (datas.size > 1)
       erros.push(`Lançamento ${codigo}: partidas com datas diferentes — devem ser a mesma.`);
+    if (vencimentos.size > 1)
+      erros.push(`Lançamento ${codigo}: partidas com vencimentos diferentes — devem ser o mesmo.`);
     const tipo = partidas.length === 1 ? "I" : centros.size === 1 ? "II" : "III";
     const total = Math.round(partidas.reduce((s, p) => s + p.valor, 0) * 100) / 100;
     lancamentos.push({ codigo, tipo, partidas, total });
@@ -207,7 +234,7 @@ function imprimirResumo(lancamentos) {
   for (const l of lancamentos) {
     const p0 = l.partidas[0];
     out(
-      `  ${l.codigo} [tipo ${l.tipo}] ${p0.fornecedor} — ${p0.data} — ` +
+      `  ${l.codigo} [tipo ${l.tipo}] ${p0.cartao} — compra ${p0.data}, venc. ${p0.vencimento} — ` +
         `R$ ${l.total.toFixed(2).replace(".", ",")} — ${l.partidas.length} partida(s)`,
     );
     for (const p of l.partidas)
@@ -239,13 +266,16 @@ function montarPayload(l, stakeholderId, mapaCategorias, mapaCentros) {
   const p0 = l.partidas[0];
   const notas = l.partidas.map((p) => p.nota).filter(Boolean).join(", ");
   const descricao =
-    (p0.descricao || `Compra ${p0.fornecedor}`) + (notas ? ` [notas: ${notas}]` : "") + " (app boletos)";
+    (p0.descricao || `Compra no cartão ${p0.cartao}`) +
+    (notas ? ` [notas: ${notas}]` : "") +
+    " (app boletos)";
   return {
     stakeholderId,
     description: descricao.slice(0, 500),
     reference: referenciaDe(l),
-    scheduleDate: p0.data,
-    dueDate: p0.data,
+    // vencimento da fatura = quando pagar; competência = data da compra
+    scheduleDate: p0.vencimento,
+    dueDate: p0.vencimento,
     accrualDate: p0.data,
     categories: [...porCategoria].map(([categoryId, value]) => ({ categoryId, value })),
     costCenterValueType: 0, // rateio por valor
@@ -361,7 +391,7 @@ async function modoEnviar(lancamentos) {
   let enviados = 0, pulados = 0, falhas = 0;
   for (const l of lancamentos) {
     const p0 = l.partidas[0];
-    const rotulo = `${l.codigo} ${p0.fornecedor} R$ ${l.total.toFixed(2).replace(".", ",")}`;
+    const rotulo = `${l.codigo} ${p0.cartao} R$ ${l.total.toFixed(2).replace(".", ",")}`;
     try {
       // já foi enviado antes? (evita duplicar ao rodar de novo)
       const ref = referenciaDe(l);
@@ -376,21 +406,18 @@ async function modoEnviar(lancamentos) {
         /* filtro indisponível: segue sem a checagem */
       }
 
-      // fornecedor: acha ou cria
-      let fid = mapaFornecedores.get(normalizar(p0.fornecedor));
+      // o "fornecedor" do lançamento é o CARTÃO: acha ou cria no Nibo
+      let fid = mapaFornecedores.get(normalizar(p0.cartao));
       if (!fid) {
-        const corpo = { name: p0.fornecedor };
-        if (p0.documento)
-          corpo.document = { number: p0.documento, type: p0.documento.length === 14 ? "CNPJ" : "CPF" };
-        const criado = await nibo("POST", "/suppliers", corpo);
+        const criado = await nibo("POST", "/suppliers", { name: p0.cartao });
         fid = idFornecedor(criado);
         if (!fid) {
           const todos = await listarTudo("/suppliers");
-          fid = idFornecedor(todos.find((f) => normalizar(nomeFornecedor(f)) === normalizar(p0.fornecedor)));
+          fid = idFornecedor(todos.find((f) => normalizar(nomeFornecedor(f)) === normalizar(p0.cartao)));
         }
-        if (!fid) throw new Error("criei o fornecedor mas não achei o id dele");
-        mapaFornecedores.set(normalizar(p0.fornecedor), fid);
-        out(`   (fornecedor "${p0.fornecedor}" criado no Nibo)`);
+        if (!fid) throw new Error("criei o fornecedor (cartão) mas não achei o id dele");
+        mapaFornecedores.set(normalizar(p0.cartao), fid);
+        out(`   (fornecedor "${p0.cartao}" criado no Nibo)`);
       }
 
       await nibo("POST", "/schedules/debit", montarPayload(l, fid, mapaCategorias, mapaCentros));
