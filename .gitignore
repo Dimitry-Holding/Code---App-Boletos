@@ -23,3 +23,7 @@ Thumbs.db
 
 # credenciales locales (NUNCA subir a GitHub)
 USUARIOS_Y_CONTRASENAS.txt
+
+# integração Nibo: token e relatórios de execução (NUNCA subir)
+nibo/token.txt
+nibo_resultado_*.txt

@@ -62,6 +62,11 @@ Publicar = `git push origin main` (a Vercel faz o deploy sozinha).
 - Linha de **IOF automática** (3,5%, categoria "IOF") ao salvar compra em moeda estrangeira.
 - **Campos obrigatórios**: não salva sem fornecedor, valor, data, centro, cartão, categoria e descrição.
 - Segurança validada: 20 testes de RLS por papel passaram em produção.
+- **Integração Nibo (fase 1 — teste controlado)**: botão "🧾 Excel Nibo" no admin gera a
+  planilha de lançamentos para revisão humana; `nibo/lancar-nibo.bat` valida as regras
+  (tipos I/II/III; proibido 2+ centros E 2+ categorias) e cria os lançamentos **agendados**
+  via API do Nibo (modos CONFERIR / TESTE que cria-e-apaga / ENVIAR). Token via
+  `nibo/token.txt` (gitignored) ou variável no topo do .bat. Ver `nibo/LEIA-ME-NIBO.md`.
 
 ## ⚠️ TAREFAS PENDENTES DE REPASSE (o responsável anterior saiu da Dimitry)
 Objetivo: tirar tudo de contas pessoais e passar para contas Dimitry, rotacionando as chaves.
@@ -86,5 +91,6 @@ Fazer nesta ordem por causa das dependências:
 Detalhes e telas em `docs/ENTREGA.md`.
 
 ## Melhorias sugeridas (roadmap)
-Atualizar README; exportação para o Nibo; recalcular IOF ao editar nota; dashboard de gastos
+Atualizar README; Nibo fase 2 (envio direto do app, sem Excel, após validar a fase 1);
+recalcular IOF ao editar nota; dashboard de gastos
 (totais/gráficos por centro e mês); testes automatizados; backup periódico do Supabase.

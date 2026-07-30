@@ -13,6 +13,7 @@ import {
   COLUNAS_EXCEL,
   TIPO_PAGAMENTO_LABEL,
 } from "@/lib/evento";
+import { gerarWorkbookNibo } from "@/lib/nibo";
 import TopBar from "./TopBar";
 
 type Perfil = { id: string; nome: string };
@@ -193,6 +194,18 @@ export default function AdminApp({
     XLSX.writeFile(wb, `notas_${inicio}_a_${fim}.xlsx`);
   }
 
+  /** Excel no formato dos lançamentos do Nibo, para revisão antes do envio. */
+  function exportarExcelNibo() {
+    if (filtrados.length === 0) return;
+    const wb = gerarWorkbookNibo(
+      filtrados.map((e) => ({
+        ...e,
+        conductor_nome: perfiles[e.conductor_id] ?? "",
+      })),
+    );
+    XLSX.writeFile(wb, `nibo_lancamentos_${inicio}_a_${fim}.xlsx`);
+  }
+
   async function verFoto(path: string) {
     const { data, error } = await supabase.storage
       .from("notas")
@@ -322,6 +335,14 @@ export default function AdminApp({
             disabled={filtrados.length === 0 || baixando !== null}
           >
             {baixando ? `📄 ${baixando}…` : "📄 PDFs (ZIP)"}
+          </button>
+          <button
+            className="btn btn-light"
+            onClick={exportarExcelNibo}
+            disabled={filtrados.length === 0}
+            title="Excel no formato dos lançamentos do Nibo, para revisar antes de enviar"
+          >
+            🧾 Excel Nibo
           </button>
           <button
             className="btn btn-primary"
