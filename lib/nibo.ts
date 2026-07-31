@@ -57,6 +57,8 @@ const APELIDOS_CATEGORIA: Record<string, string> = {
   "servico de trasporte": "Servico de Transporte",
   "despesa com alimentacao": "Despesa com Alimentacao",
   "doacao, presente e cortesia": "Doacao, Brinde e Cortesia",
+  // decisão da administração: IOF entra no Nibo como Tarifas Bancarias
+  iof: "Tarifas Bancarias",
 };
 
 const CATALOGO_NIBO = new Map(
@@ -144,17 +146,55 @@ export function montarLinhasNibo(
     }
   }
 
+  // Centro de custo NUNCA sai vazio. Ordem de resolução para nota sem centro:
+  // 1) herda da nota que compartilha a MESMA FOTO (linha de IOF ↔ compra original);
+  // 2) centro mais usado pelo usuário na mesma categoria;
+  // 3) centro mais usado pelo usuário no geral.
+  // Nos casos 2 e 3 é uma SUGESTÃO: a linha ganha aviso para o revisor conferir.
+  const centroPorFoto = new Map<string, string>();
+  const usoPorUserCat = new Map<string, Map<string, number>>();
+  const usoPorUser = new Map<string, Map<string, number>>();
+  const contar = (m: Map<string, Map<string, number>>, k: string, centro: string) => {
+    const sub = m.get(k) ?? new Map<string, number>();
+    sub.set(centro, (sub.get(centro) ?? 0) + 1);
+    m.set(k, sub);
+  };
+  for (const e of eventos) {
+    if (!e.centro_custo) continue;
+    if (e.foto_path && !centroPorFoto.has(e.foto_path))
+      centroPorFoto.set(e.foto_path, e.centro_custo);
+    contar(usoPorUserCat, `${e.conductor_id}|${normalizarNome(e.categoria ?? "")}`, e.centro_custo);
+    contar(usoPorUser, e.conductor_id, e.centro_custo);
+  }
+  const maisUsado = (m?: Map<string, number>): string => {
+    let melhor = "";
+    let max = 0;
+    for (const [centro, n] of m ?? []) if (n > max) { max = n; melhor = centro; }
+    return melhor;
+  };
+  const resolverCentro = (e: EventoNomeado): { centro: string; sugerido: boolean } => {
+    if (e.centro_custo) return { centro: e.centro_custo, sugerido: false };
+    const daFoto = e.foto_path ? centroPorFoto.get(e.foto_path) : undefined;
+    if (daFoto) return { centro: daFoto, sugerido: false };
+    const porCategoria = maisUsado(
+      usoPorUserCat.get(`${e.conductor_id}|${normalizarNome(e.categoria ?? "")}`),
+    );
+    const escolhido = porCategoria || maisUsado(usoPorUser.get(e.conductor_id));
+    return { centro: escolhido, sugerido: escolhido !== "" };
+  };
+
   return ordenados.map((e, i) => {
     const original = duplicataDe.get(e.id);
     const cartao =
       porUsuarioEDigitos.get(`${e.conductor_id}|${e.ultimos4 ?? ""}`) ??
       porDigitos.get(e.ultimos4 ?? "");
     const diaVenc = cartao?.dia_vencimento ?? 0;
-    const aviso = original
-      ? `[POSSÍVEL DUPLICATA de ${codigoId(original)} — conferir] `
-      : "";
+    const { centro, sugerido } = resolverCentro(e);
+    const avisos =
+      (original ? `[POSSÍVEL DUPLICATA de ${codigoId(original)} — conferir] ` : "") +
+      (sugerido ? `[CENTRO SUGERIDO "${centro}" — conferir] ` : "");
     const descricao =
-      aviso + [e.fornecedor, e.descricao].filter(Boolean).join(" — ");
+      avisos + [e.fornecedor, e.descricao].filter(Boolean).join(" — ");
     return {
       ["Lançamento"]: "L" + String(i + 1).padStart(3, "0"),
       ["Enviar"]: original ? "NÃO" : "SIM",
@@ -171,7 +211,7 @@ export function montarLinhasNibo(
       ["Categoria (app)"]: e.categoria ?? "",
       ["Categoria (Nibo)"]: categoriaNibo(e.categoria ?? ""),
       ["Centro de custo (app)"]: e.centro_custo ?? "",
-      ["Centro de custo (Nibo)"]: e.centro_custo ?? "",
+      ["Centro de custo (Nibo)"]: centro,
       ["Descrição"]: descricao,
       ["Nota"]: codigoId(e.id),
       ["Usuário"]: e.conductor_nome ?? "",
@@ -191,7 +231,10 @@ const INSTRUCOES: string[][] = [
   ["3. 'Categoria (Nibo)': só aceita categorias que EXISTEM no Nibo — a lista completa"],
   ["   está na aba 'CategoriasNibo'. Quando vier vazia, é porque o nome do app não"],
   ["   casou com nenhuma: escolha a categoria certa na lista e copie aqui."],
-  ["4. 'Centro de custo (Nibo)': escreva o nome exato como está no Nibo."],
+  ["4. 'Centro de custo (Nibo)': escreva o nome exato como está no Nibo. Nunca sai"],
+  ["   vazio: nota sem centro herda o da compra da mesma foto (caso do IOF) ou recebe"],
+  ["   o centro mais usado pelo usuário, com aviso [CENTRO SUGERIDO] para conferir."],
+  ["   IOF entra no Nibo com a categoria 'Tarifas Bancarias' (decisão da administração)."],
   ["5. 'Enviar': deixe SIM para lançar; mude para NÃO para pular a linha."],
   ["   Possíveis DUPLICATAS (mesmo fornecedor, data, valor e cartão) já saem com"],
   ["   Enviar = NÃO e aviso na descrição — confira e mude para SIM se não for duplicata."],
