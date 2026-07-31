@@ -119,12 +119,18 @@ async function nibo(metodo, caminho, corpo) {
   return json;
 }
 
-/** Lista paginada; aceita os formatos de resposta {items}, {value} ou array. */
-async function listarTudo(caminho) {
+/**
+ * Lista paginada; aceita os formatos de resposta {items}, {value} ou array.
+ * ATENÇÃO: vários endpoints do Nibo respondem HTTP 500 se houver $top/$skip
+ * SEM $orderby (suppliers exige name; costcenters, description; schedules,
+ * dueDate) — por isso o campo de ordenação é passado por chamada.
+ */
+async function listarTudo(caminho, orderby) {
   const itens = [];
   for (let skip = 0; ; skip += 500) {
     const sep = caminho.includes("?") ? "&" : "?";
-    const data = await nibo("GET", `${caminho}${sep}$top=500&$skip=${skip}`);
+    const ord = orderby ? `&$orderby=${orderby}` : "";
+    const data = await nibo("GET", `${caminho}${sep}$top=500&$skip=${skip}${ord}`);
     const pagina = Array.isArray(data) ? data : (data?.items ?? data?.value ?? []);
     itens.push(...pagina);
     if (pagina.length < 500) break;
@@ -143,10 +149,10 @@ const nomeFornecedor = (f) => f?.name ?? f?.nome ?? "";
 let caminhoCentros = "/costcenters";
 async function listarCentros() {
   try {
-    return await listarTudo(caminhoCentros);
+    return await listarTudo(caminhoCentros, "description");
   } catch {
     caminhoCentros = "/cost-center";
-    return await listarTudo(caminhoCentros);
+    return await listarTudo(caminhoCentros, "description");
   }
 }
 
@@ -302,7 +308,7 @@ async function modoTeste() {
   const criado = await nibo("POST", "/suppliers", { name: nomeTeste });
   let fornecedorId = idFornecedor(criado);
   if (!fornecedorId) {
-    const todos = await listarTudo("/suppliers");
+    const todos = await listarTudo("/suppliers", "name");
     fornecedorId = idFornecedor(todos.find((f) => normalizar(nomeFornecedor(f)) === normalizar(nomeTeste)));
   }
   if (!fornecedorId) throw new Error("Fornecedor de teste criado, mas não achei o id dele.");
@@ -331,6 +337,7 @@ async function modoTeste() {
   if (!scheduleId) {
     const achados = await listarTudo(
       `/schedules/debit?$filter=reference eq '${referencia}'`,
+      "dueDate",
     );
     scheduleId = achados[0]?.scheduleId ?? achados[0]?.id;
   }
@@ -357,7 +364,7 @@ async function modoEnviar(lancamentos) {
   const [categorias, centros, fornecedores] = await Promise.all([
     listarTudo("/categories"),
     listarCentros(),
-    listarTudo("/suppliers"),
+    listarTudo("/suppliers", "name"),
   ]);
   const mapaCategorias = new Map(categorias.map((c) => [normalizar(nomeCategoria(c)), idCategoria(c)]));
   const mapaCentros = new Map(centros.map((c) => [normalizar(nomeCentro(c)), idCentro(c)]));
@@ -396,7 +403,7 @@ async function modoEnviar(lancamentos) {
       // já foi enviado antes? (evita duplicar ao rodar de novo)
       const ref = referenciaDe(l);
       try {
-        const existentes = await listarTudo(`/schedules/debit?$filter=reference eq '${ref}'`);
+        const existentes = await listarTudo(`/schedules/debit?$filter=reference eq '${ref}'`, "dueDate");
         if (existentes.length > 0) {
           out(`⏭  ${rotulo} — JÁ EXISTE no Nibo (referência ${ref}), pulado.`);
           pulados++;
@@ -412,7 +419,7 @@ async function modoEnviar(lancamentos) {
         const criado = await nibo("POST", "/suppliers", { name: p0.cartao });
         fid = idFornecedor(criado);
         if (!fid) {
-          const todos = await listarTudo("/suppliers");
+          const todos = await listarTudo("/suppliers", "name");
           fid = idFornecedor(todos.find((f) => normalizar(nomeFornecedor(f)) === normalizar(p0.cartao)));
         }
         if (!fid) throw new Error("criei o fornecedor (cartão) mas não achei o id dele");
