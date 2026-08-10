@@ -76,7 +76,6 @@ export default function ConductorApp({
   const [buscandoCambio, setBuscandoCambio] = useState(false);
   const [cambioInfo, setCambioInfo] = useState<string | null>(null);
 
-  const camRef = useRef<HTMLInputElement>(null);
   const galRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
   const scanRef = useRef<HTMLInputElement>(null);
@@ -200,14 +199,26 @@ export default function ConductorApp({
     else await procesarArchivo(files[0]);
   }
 
-  /** Junta várias imagens num único PDF (uma página por foto) e processa. */
+  /**
+   * Processa páginas capturadas: 1 foto segue como imagem (com pré-visualização);
+   * 2+ fotos viram um único PDF (uma página por foto).
+   */
+  async function procesarPaginas(pags: string[]) {
+    if (pags.length === 1) {
+      await procesarArchivo({ dataUrl: pags[0], mediaType: "image/jpeg", esPdf: false });
+    } else {
+      await procesarArchivo(await paginasParaPdf(pags));
+    }
+  }
+
+  /** Várias imagens escolhidas na galeria = páginas da mesma nota. */
   async function procesarVariasImagens(files: File[]) {
     setError(null);
     setEstado("procesando");
     try {
       const pags: string[] = [];
       for (const f of files) pags.push(await redimensionar(f));
-      await procesarArchivo(await paginasParaPdf(pags));
+      await procesarPaginas(pags);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao juntar as fotos.");
       setEstado("inicio");
@@ -247,14 +258,15 @@ export default function ConductorApp({
     setPaginas([]);
     setEstado("procesando");
     try {
-      await procesarArchivo(await paginasParaPdf(pags));
+      await procesarPaginas(pags);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao montar o PDF.");
       setEstado("inicio");
     }
   }
 
-  async function procesarArchivo(file: File) {
+  /** Processa um arquivo (foto/PDF) ou uma captura já tratada (fluxo de fotos). */
+  async function procesarArchivo(entrada: File | Captura) {
     setError(null);
     setEditId(null);
     setEstado("procesando");
@@ -262,37 +274,43 @@ export default function ConductorApp({
     let subido: string | null = null;
     try {
       let cap: Captura;
-      // O tipo é detectado pelo CONTEÚDO do arquivo, não pelo rótulo do celular:
-      // PDFs de apps de scanner/Drive/WhatsApp chegam com o MIME errado no Android.
-      const tipo = await detectarTipoArquivo(file);
-      if (tipo === "pdf") {
-        if (file.size > MAX_PDF_BYTES) {
-          throw new Error("PDF muito grande (máx. 12 MB). Tente um PDF menor.");
-        }
-        cap = { dataUrl: "", mediaType: "application/pdf", esPdf: true };
-      } else if (tipo === "imagem") {
-        try {
-          cap = { dataUrl: await redimensionar(file), mediaType: "image/jpeg", esPdf: false };
-        } catch {
+      if (!(entrada instanceof File)) {
+        cap = entrada;
+      } else {
+        const file = entrada;
+        // O tipo é detectado pelo CONTEÚDO do arquivo, não pelo rótulo do celular:
+        // PDFs de apps de scanner/Drive/WhatsApp chegam com o MIME errado no Android.
+        const tipo = await detectarTipoArquivo(file);
+        if (tipo === "pdf") {
+          if (file.size > MAX_PDF_BYTES) {
+            throw new Error("PDF muito grande (máx. 12 MB). Tente um PDF menor.");
+          }
+          cap = { dataUrl: "", mediaType: "application/pdf", esPdf: true };
+        } else if (tipo === "imagem") {
+          try {
+            cap = { dataUrl: await redimensionar(file), mediaType: "image/jpeg", esPdf: false };
+          } catch {
+            throw new Error(
+              "Não consegui abrir esta imagem no navegador (formato HEIC?). " +
+                "Tente tirar a foto pelo botão 📷 do app.",
+            );
+          }
+        } else {
           throw new Error(
-            "Não consegui abrir esta imagem no navegador (formato HEIC?). " +
-              "Tente tirar a foto pelo botão 📷 do app.",
+            `Não reconheci o arquivo "${file.name}"${file.type ? ` (tipo ${file.type})` : ""}. ` +
+              "Use uma foto ou um PDF.",
           );
         }
-      } else {
-        throw new Error(
-          `Não reconheci o arquivo "${file.name}"${file.type ? ` (tipo ${file.type})` : ""}. ` +
-            "Use uma foto ou um PDF.",
-        );
       }
       // PDF: sube a Storage y extrae desde ahi (evita el limite de tamano de Vercel).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       let extractBody: any;
       if (cap.esPdf) {
+        if (!(entrada instanceof File)) throw new Error("PDF inválido.");
         const path = `${userId}/${crypto.randomUUID()}.pdf`;
         const up = await supabase.storage
           .from("notas")
-          .upload(path, file, { contentType: "application/pdf" });
+          .upload(path, entrada, { contentType: "application/pdf" });
         if (up.error) throw up.error;
         subido = path;
         cap = { ...cap, storagePath: path };
@@ -592,7 +610,7 @@ export default function ConductorApp({
               className="btn btn-primary btn-block"
               style={{ marginTop: 12 }}
               disabled={faltaAtribuir}
-              onClick={() => camRef.current?.click()}
+              onClick={() => scanRef.current?.click()}
             >
               📷 Tirar foto
             </button>
@@ -612,17 +630,10 @@ export default function ConductorApp({
             >
               📄 Carregar PDF
             </button>
-            <button
-              className="btn btn-light btn-block"
-              style={{ marginTop: 10 }}
-              disabled={faltaAtribuir}
-              onClick={() => scanRef.current?.click()}
-            >
-              📑 Nota com várias páginas (scanner)
-            </button>
             <p className="note" style={{ marginTop: 8 }}>
-              Nota longa? Use o scanner (uma foto por página) ou selecione várias
-              fotos de uma vez na galeria — o app junta tudo num PDF só.
+              A foto é digitalizada automaticamente (nitidez e contraste). Nota
+              comprida? Tire uma foto por parte — dá para adicionar quantas quiser
+              antes de concluir.
             </p>
 
             {error && <div className="error-box">{error}</div>}
@@ -631,10 +642,12 @@ export default function ConductorApp({
 
         {estado === "scanner" && (
           <div className="card">
-            <strong>📑 Scanner — nota com várias páginas</strong>
+            <strong>📷 Fotos da nota</strong>
             <p className="note" style={{ marginTop: 4 }}>
-              {paginas.length} página{paginas.length === 1 ? "" : "s"} capturada
-              {paginas.length === 1 ? "" : "s"}. Tire uma foto por página, na ordem.
+              {paginas.length} foto{paginas.length === 1 ? "" : "s"} capturada
+              {paginas.length === 1 ? "" : "s"}, já digitalizada
+              {paginas.length === 1 ? "" : "s"}. Se a nota continua, tire mais uma
+              foto da próxima parte; se acabou, conclua.
             </p>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 10 }}>
               {paginas.map((p, i) => (
@@ -670,14 +683,14 @@ export default function ConductorApp({
               style={{ marginTop: 12 }}
               onClick={() => scanRef.current?.click()}
             >
-              ➕ Tirar a próxima página
+              ➕ Adicionar outra foto
             </button>
             <button
               className="btn btn-primary btn-block"
               style={{ marginTop: 10 }}
               onClick={concluirScanner}
             >
-              ✔️ Concluir ({paginas.length}) e ler com IA
+              ✔️ Concluir ({paginas.length} foto{paginas.length === 1 ? "" : "s"}) e ler com IA
             </button>
             <button className="btn-ghost" style={{ marginTop: 8 }} onClick={cancelarScanner}>
               Cancelar
@@ -687,7 +700,6 @@ export default function ConductorApp({
         )}
 
         {/* Inputs de arquivo: fora dos blocos de estado para funcionarem em todos */}
-        <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={alElegir} />
         <input ref={galRef} type="file" accept="image/*" multiple className="hidden" onChange={alElegir} />
         <input ref={pdfRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={alElegir} />
         <input ref={scanRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={alElegirScan} />
@@ -1051,7 +1063,7 @@ async function paginasParaPdf(paginas: string[]): Promise<File> {
   });
 }
 
-async function redimensionar(file: File, maxDim = 1600, calidad = 0.8): Promise<string> {
+async function redimensionar(file: File, maxDim = 1600, calidad = 0.85): Promise<string> {
   const img = await cargarImagen(file);
   const escala = Math.min(1, maxDim / Math.max(img.width, img.height));
   const w = Math.round(img.width * escala);
@@ -1062,7 +1074,65 @@ async function redimensionar(file: File, maxDim = 1600, calidad = 0.8): Promise<
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Não foi possível processar a imagem.");
   ctx.drawImage(img, 0, 0, w, h);
+  aplicarEfeitoScanner(ctx, w, h);
   return canvas.toDataURL("image/jpeg", calidad);
+}
+
+/**
+ * Efeito "digitalizado" automático (o motivo de usarem CamScanner): tons de
+ * cinza, contraste esticado por percentis (papel → branco, tinta → preto) e
+ * nitidez leve. Também ajuda a IA a ler fotos escuras/amareladas.
+ */
+function aplicarEfeitoScanner(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const im = ctx.getImageData(0, 0, w, h);
+  const d = im.data;
+  const n = w * h;
+
+  // luminância de cada pixel + histograma
+  const lum = new Uint8ClampedArray(n);
+  const hist = new Uint32Array(256);
+  for (let i = 0; i < n; i++) {
+    const l = (d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) | 0;
+    lum[i] = l;
+    hist[l]++;
+  }
+
+  // percentis 3%/97% → estica o contraste ignorando extremos (sombras/reflexos)
+  let acc = 0;
+  let p3 = 0;
+  let p97 = 255;
+  for (let v = 0; v < 256; v++) {
+    acc += hist[v];
+    if (acc >= n * 0.03) { p3 = v; break; }
+  }
+  acc = 0;
+  for (let v = 255; v >= 0; v--) {
+    acc += hist[v];
+    if (acc >= n * 0.03) { p97 = v; break; }
+  }
+  const faixa = Math.max(16, p97 - p3);
+  const mapa = new Uint8ClampedArray(256);
+  for (let v = 0; v < 256; v++) {
+    mapa[v] = Math.max(0, Math.min(255, Math.round(((v - p3) * 255) / faixa)));
+  }
+  const cinza = new Uint8ClampedArray(n);
+  for (let i = 0; i < n; i++) cinza[i] = mapa[lum[i]];
+
+  // nitidez suave (máscara 3x3 a 50%) e gravação em tons de cinza
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      let v = cinza[i];
+      if (x > 0 && x < w - 1 && y > 0 && y < h - 1) {
+        const nitido =
+          5 * cinza[i] - cinza[i - 1] - cinza[i + 1] - cinza[i - w] - cinza[i + w];
+        v = (Math.max(0, Math.min(255, nitido)) + cinza[i]) >> 1;
+      }
+      d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = v;
+      d[i * 4 + 3] = 255;
+    }
+  }
+  ctx.putImageData(im, 0, 0);
 }
 
 function cargarImagen(file: File): Promise<HTMLImageElement> {
