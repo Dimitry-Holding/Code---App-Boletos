@@ -18,7 +18,7 @@ import {
 } from "@/lib/evento";
 import TopBar from "./TopBar";
 
-type Estado = "inicio" | "procesando" | "revision" | "edicion";
+type Estado = "inicio" | "scanner" | "procesando" | "revision" | "edicion";
 type Borrador = Extraccion & { centro_custo: string };
 type Captura = {
   dataUrl: string;
@@ -79,6 +79,9 @@ export default function ConductorApp({
   const camRef = useRef<HTMLInputElement>(null);
   const galRef = useRef<HTMLInputElement>(null);
   const pdfRef = useRef<HTMLInputElement>(null);
+  const scanRef = useRef<HTMLInputElement>(null);
+  // Modo scanner: páginas já capturadas (dataURLs JPEG), viram um único PDF.
+  const [paginas, setPaginas] = useState<string[]>([]);
 
   const hoy = new Date();
   const [ano, setAno] = useState(hoy.getFullYear());
@@ -189,9 +192,66 @@ export default function ConductorApp({
   });
 
   async function alElegir(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) await procesarArchivo(file);
+    const files = Array.from(e.target.files ?? []);
     e.target.value = "";
+    if (files.length === 0) return;
+    // Várias fotos selecionadas na galeria = uma nota de várias páginas.
+    if (files.length > 1) await procesarVariasImagens(files);
+    else await procesarArchivo(files[0]);
+  }
+
+  /** Junta várias imagens num único PDF (uma página por foto) e processa. */
+  async function procesarVariasImagens(files: File[]) {
+    setError(null);
+    setEstado("procesando");
+    try {
+      const pags: string[] = [];
+      for (const f of files) pags.push(await redimensionar(f));
+      await procesarArchivo(await paginasParaPdf(pags));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao juntar as fotos.");
+      setEstado("inicio");
+    }
+  }
+
+  // --- Modo scanner (uma foto por página, depois vira um PDF só) ---
+
+  async function alElegirScan(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setError(null);
+    try {
+      const pag = await redimensionar(file);
+      setPaginas((p) => [...p, pag]);
+      setEstado("scanner");
+    } catch {
+      setError("Não foi possível ler a foto. Tente novamente.");
+    }
+  }
+
+  function removerPagina(i: number) {
+    const novas = paginas.filter((_, idx) => idx !== i);
+    setPaginas(novas);
+    if (novas.length === 0) setEstado("inicio");
+  }
+
+  function cancelarScanner() {
+    setPaginas([]);
+    setEstado("inicio");
+  }
+
+  async function concluirScanner() {
+    if (paginas.length === 0) return;
+    const pags = paginas;
+    setPaginas([]);
+    setEstado("procesando");
+    try {
+      await procesarArchivo(await paginasParaPdf(pags));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Erro ao montar o PDF.");
+      setEstado("inicio");
+    }
   }
 
   async function procesarArchivo(file: File) {
@@ -202,15 +262,28 @@ export default function ConductorApp({
     let subido: string | null = null;
     try {
       let cap: Captura;
-      if (file.type === "application/pdf") {
+      // O tipo é detectado pelo CONTEÚDO do arquivo, não pelo rótulo do celular:
+      // PDFs de apps de scanner/Drive/WhatsApp chegam com o MIME errado no Android.
+      const tipo = await detectarTipoArquivo(file);
+      if (tipo === "pdf") {
         if (file.size > MAX_PDF_BYTES) {
           throw new Error("PDF muito grande (máx. 12 MB). Tente um PDF menor.");
         }
         cap = { dataUrl: "", mediaType: "application/pdf", esPdf: true };
-      } else if (file.type.startsWith("image/")) {
-        cap = { dataUrl: await redimensionar(file), mediaType: "image/jpeg", esPdf: false };
+      } else if (tipo === "imagem") {
+        try {
+          cap = { dataUrl: await redimensionar(file), mediaType: "image/jpeg", esPdf: false };
+        } catch {
+          throw new Error(
+            "Não consegui abrir esta imagem no navegador (formato HEIC?). " +
+              "Tente tirar a foto pelo botão 📷 do app.",
+          );
+        }
       } else {
-        throw new Error("Formato não suportado. Use foto ou PDF.");
+        throw new Error(
+          `Não reconheci o arquivo "${file.name}"${file.type ? ` (tipo ${file.type})` : ""}. ` +
+            "Use uma foto ou um PDF.",
+        );
       }
       // PDF: sube a Storage y extrae desde ahi (evita el limite de tamano de Vercel).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -539,14 +612,85 @@ export default function ConductorApp({
             >
               📄 Carregar PDF
             </button>
-
-            <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={alElegir} />
-            <input ref={galRef} type="file" accept="image/*" className="hidden" onChange={alElegir} />
-            <input ref={pdfRef} type="file" accept="application/pdf" className="hidden" onChange={alElegir} />
+            <button
+              className="btn btn-light btn-block"
+              style={{ marginTop: 10 }}
+              disabled={faltaAtribuir}
+              onClick={() => scanRef.current?.click()}
+            >
+              📑 Nota com várias páginas (scanner)
+            </button>
+            <p className="note" style={{ marginTop: 8 }}>
+              Nota longa? Use o scanner (uma foto por página) ou selecione várias
+              fotos de uma vez na galeria — o app junta tudo num PDF só.
+            </p>
 
             {error && <div className="error-box">{error}</div>}
           </div>
         )}
+
+        {estado === "scanner" && (
+          <div className="card">
+            <strong>📑 Scanner — nota com várias páginas</strong>
+            <p className="note" style={{ marginTop: 4 }}>
+              {paginas.length} página{paginas.length === 1 ? "" : "s"} capturada
+              {paginas.length === 1 ? "" : "s"}. Tire uma foto por página, na ordem.
+            </p>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginTop: 10 }}>
+              {paginas.map((p, i) => (
+                <div key={i} style={{ position: "relative" }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={p}
+                    alt={`página ${i + 1}`}
+                    style={{
+                      width: 84,
+                      height: 112,
+                      objectFit: "cover",
+                      borderRadius: 8,
+                      border: "1px solid #d0d5dd",
+                    }}
+                  />
+                  <button
+                    className="btn-ghost"
+                    aria-label={`remover página ${i + 1}`}
+                    onClick={() => removerPagina(i)}
+                    style={{ position: "absolute", top: 0, right: 0 }}
+                  >
+                    ✕
+                  </button>
+                  <div className="note" style={{ textAlign: "center", margin: 0 }}>
+                    pág. {i + 1}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              className="btn btn-light btn-block"
+              style={{ marginTop: 12 }}
+              onClick={() => scanRef.current?.click()}
+            >
+              ➕ Tirar a próxima página
+            </button>
+            <button
+              className="btn btn-primary btn-block"
+              style={{ marginTop: 10 }}
+              onClick={concluirScanner}
+            >
+              ✔️ Concluir ({paginas.length}) e ler com IA
+            </button>
+            <button className="btn-ghost" style={{ marginTop: 8 }} onClick={cancelarScanner}>
+              Cancelar
+            </button>
+            {error && <div className="error-box">{error}</div>}
+          </div>
+        )}
+
+        {/* Inputs de arquivo: fora dos blocos de estado para funcionarem em todos */}
+        <input ref={camRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={alElegir} />
+        <input ref={galRef} type="file" accept="image/*" multiple className="hidden" onChange={alElegir} />
+        <input ref={pdfRef} type="file" accept="application/pdf,.pdf" className="hidden" onChange={alElegir} />
+        <input ref={scanRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={alElegirScan} />
 
         {estado === "procesando" && (
           <div className="card">
@@ -859,6 +1003,52 @@ export default function ConductorApp({
       </main>
     </>
   );
+}
+
+/**
+ * Detecta o tipo REAL do arquivo pelos primeiros bytes (assinatura), porque no
+ * Android arquivos vindos de apps de scanner/Drive/WhatsApp chegam com o MIME
+ * vazio ou genérico — e um PDF válido era recusado como "formato não suportado".
+ */
+async function detectarTipoArquivo(file: File): Promise<"pdf" | "imagem" | "desconhecido"> {
+  const buf = new Uint8Array(await file.slice(0, 16).arrayBuffer());
+  const ascii = (i: number, n: number) =>
+    String.fromCharCode(...Array.from(buf.slice(i, i + n)));
+  if (ascii(0, 4) === "%PDF") return "pdf";
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "imagem"; // JPEG
+  if (buf[0] === 0x89 && ascii(1, 3) === "PNG") return "imagem"; // PNG
+  if (ascii(0, 4) === "RIFF" && ascii(8, 4) === "WEBP") return "imagem"; // WebP
+  if (ascii(0, 3) === "GIF") return "imagem"; // GIF
+  if (ascii(4, 4) === "ftyp") return "imagem"; // HEIC/HEIF/AVIF
+  if (buf[0] === 0x42 && buf[1] === 0x4d) return "imagem"; // BMP
+  // Reserva: o rótulo informado pelo celular e a extensão do nome.
+  if (file.type === "application/pdf" || /\.pdf$/i.test(file.name)) return "pdf";
+  if (file.type.startsWith("image/")) return "imagem";
+  return "desconhecido";
+}
+
+/** Monta um PDF (uma página por foto) no próprio celular — modo scanner. */
+async function paginasParaPdf(paginas: string[]): Promise<File> {
+  const { jsPDF } = await import("jspdf");
+  let pdf: import("jspdf").jsPDF | null = null;
+  for (const dataUrl of paginas) {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const im = new Image();
+      im.onload = () => resolve(im);
+      im.onerror = () => reject(new Error("Falha ao carregar uma das páginas."));
+      im.src = dataUrl;
+    });
+    const w = img.naturalWidth || 1240;
+    const h = img.naturalHeight || 1754;
+    const orient = w >= h ? "landscape" : "portrait";
+    if (!pdf) pdf = new jsPDF({ orientation: orient, unit: "px", format: [w, h] });
+    else pdf.addPage([w, h], orient);
+    pdf.addImage(dataUrl, "JPEG", 0, 0, w, h);
+  }
+  if (!pdf) throw new Error("Nenhuma página capturada.");
+  return new File([pdf.output("blob")], "nota_multipagina.pdf", {
+    type: "application/pdf",
+  });
 }
 
 async function redimensionar(file: File, maxDim = 1600, calidad = 0.8): Promise<string> {
