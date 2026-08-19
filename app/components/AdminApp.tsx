@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import * as XLSX from "xlsx";
 import JSZip from "jszip";
@@ -51,6 +51,8 @@ export default function AdminApp({
   const [baixando, setBaixando] = useState<string | null>(null);
   const [ordem, setOrdem] = useState<{ col: string; dir: 1 | -1 } | null>(null);
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
+  // nota cuja observação (descrição) está aberta na tabela
+  const [obsAberta, setObsAberta] = useState<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -475,7 +477,8 @@ export default function AdminApp({
                 </thead>
                 <tbody>
                   {ordenados.map((e) => (
-                    <tr key={e.id}>
+                    <Fragment key={e.id}>
+                    <tr>
                       <td>
                         <input
                           type="checkbox"
@@ -503,6 +506,17 @@ export default function AdminApp({
                       <td>{perfiles[e.conductor_id] ?? "—"}</td>
                       <td>
                         <div className="row" style={{ gap: 4 }}>
+                          {e.descricao && (
+                            <button
+                              className="btn-ghost"
+                              title="Ver observação da nota"
+                              onClick={() =>
+                                setObsAberta(obsAberta === e.id ? null : e.id)
+                              }
+                            >
+                              💬
+                            </button>
+                          )}
                           <button className="btn-ghost" onClick={() => verFoto(e.foto_path)}>
                             👁️
                           </button>
@@ -517,6 +531,17 @@ export default function AdminApp({
                         </div>
                       </td>
                     </tr>
+                    {obsAberta === e.id && e.descricao && (
+                      <tr>
+                        <td colSpan={11} style={{ background: "#f8fafc" }}>
+                          <span style={{ whiteSpace: "pre-wrap" }}>
+                            💬 <strong>Observação ({codigoId(e.id)}):</strong>{" "}
+                            {e.descricao}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>

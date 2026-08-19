@@ -989,6 +989,11 @@ export default function ConductorApp({
                     {ev.data_documento || "sem data"} · {ev.centro_custo || "—"} ·{" "}
                     {ev.categoria || "—"} · {ev.ultimos4 ? `••${ev.ultimos4}` : "—"}
                   </div>
+                  {ev.descricao && (
+                    <div className="note" style={{ marginTop: 6, marginBottom: 0, whiteSpace: "pre-wrap" }}>
+                      💬 {ev.descricao}
+                    </div>
+                  )}
                   <div className="row" style={{ marginTop: 8 }}>
                     <span className="spacer" />
                     {editavel ? (
@@ -1002,7 +1007,7 @@ export default function ConductorApp({
                       </>
                     ) : (
                       <span className="note" style={{ margin: 0 }}>
-                        Bloqueada (mais de 30 dias)
+                        🔒 Edição bloqueada (mais de 30 dias) — leitura liberada
                       </span>
                     )}
                   </div>
