@@ -47,7 +47,7 @@ npm run dev            # http://localhost:3000
 Publicar = `git push origin main` (a Vercel faz o deploy sozinha).
 
 ## Variáveis de ambiente (.env.local, NÃO vai pro Git)
-`GEMINI_API_KEY`, `GEMINI_MODEL` (opcional; default no código = `gemini-flash-latest`),
+`GEMINI_API_KEY`, `GEMINI_MODEL` (opcional; default no código = `gemini-flash-lite-latest`),
 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Convenções / regras invioláveis

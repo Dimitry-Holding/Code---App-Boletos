@@ -5,12 +5,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Modelo principal y respaldo: si el principal agota su cuota gratuita (429),
-// se intenta automáticamente con el siguiente de la lista.
+// Modelo principal y respaldos: si uno agota su cuota (429) O SE CUELGA
+// (timeout), se pasa automáticamente al siguiente de la lista.
+// Ago/2026: gemini-flash-latest empezó a colgarse (90s sin responder) mientras
+// los "lite" responden en 1-3s y leen bien los cupones — por eso lite primero.
 const MODELOS = [
-  process.env.GEMINI_MODEL || "gemini-flash-latest",
+  process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
   "gemini-3.1-flash-lite",
+  "gemini-flash-latest",
 ].filter((m, i, arr) => arr.indexOf(m) === i);
+
+// Tiempo máximo por intento: un modelo colgado no puede comerse los 60s de la
+// función (el usuario veía "demora + error" sin que el respaldo llegara a actuar).
+const TIMEOUT_MODELO_MS = 25000;
 
 function endpointDe(modelo: string): string {
   return `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent`;
@@ -156,11 +163,20 @@ export async function POST(req: Request) {
     porModelo: for (let m = 0; m < MODELOS.length; m++) {
       const ultimoModelo = m === MODELOS.length - 1;
       for (let intento = 0; intento < 3; intento++) {
-        respuesta = await fetch(endpointDe(MODELOS[m]), {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-          body: cuerpoGemini,
-        });
+        try {
+          respuesta = await fetch(endpointDe(MODELOS[m]), {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+            body: cuerpoGemini,
+            signal: AbortSignal.timeout(TIMEOUT_MODELO_MS),
+          });
+        } catch {
+          // Modelo colgado o error de red: pasamos al siguiente modelo.
+          respuesta = null;
+          data = { error: { message: `O modelo ${MODELOS[m]} não respondeu a tempo.` } };
+          if (!ultimoModelo) continue porModelo;
+          continue;
+        }
         data = await respuesta.json();
         if (respuesta.ok) break porModelo;
         if (!REINTENTABLES.has(respuesta.status)) break porModelo;
