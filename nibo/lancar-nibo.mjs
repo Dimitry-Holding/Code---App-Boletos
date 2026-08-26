@@ -142,8 +142,23 @@ const idCategoria = (c) => c?.id ?? c?.categoryId ?? c?.Id;
 const nomeCategoria = (c) => c?.name ?? c?.nome ?? c?.description ?? "";
 const idCentro = (c) => c?.costCenterId ?? c?.id ?? c?.Id;
 const nomeCentro = (c) => c?.description ?? c?.name ?? c?.nome ?? "";
-const idFornecedor = (f) => f?.id ?? f?.stakeholderId ?? f?.Id;
+// POST /suppliers devolve o id como STRING JSON crua; nas listagens vem objeto
+const idFornecedor = (f) => (typeof f === "string" ? f : (f?.id ?? f?.stakeholderId ?? f?.Id));
 const nomeFornecedor = (f) => f?.name ?? f?.nome ?? "";
+
+/**
+ * Mapa nome→id de categorias para PAGAMENTOS: quando o mesmo nome existe como
+ * entrada (in) e saída (out), vale a de SAÍDA — pagamento com categoria "in"
+ * é recusado pelo Nibo com o enigmático "Valor do agendamento deve ser negativo".
+ */
+function mapaCategoriasSaida(categorias) {
+  const mapa = new Map();
+  for (const c of categorias) {
+    const chave = normalizar(nomeCategoria(c));
+    if (!mapa.has(chave) || c?.type === "out") mapa.set(chave, idCategoria(c));
+  }
+  return mapa;
+}
 
 /** O caminho de centros de custo varia na doc; tenta os dois. */
 let caminhoCentros = "/costcenters";
@@ -283,9 +298,11 @@ function montarPayload(l, stakeholderId, mapaCategorias, mapaCentros) {
     scheduleDate: p0.vencimento,
     dueDate: p0.vencimento,
     accrualDate: p0.data,
-    categories: [...porCategoria].map(([categoryId, value]) => ({ categoryId, value })),
+    // Agendamento de PAGAMENTO no Nibo usa valores NEGATIVOS (dinheiro saindo) —
+    // a API recusa positivos com "Valor do agendamento deve ser negativo".
+    categories: [...porCategoria].map(([categoryId, value]) => ({ categoryId, value: -value })),
     costCenterValueType: 0, // rateio por valor
-    costCenters: [...porCentro].map(([costCenterId, value]) => ({ costCenterId, value })),
+    costCenters: [...porCentro].map(([costCenterId, value]) => ({ costCenterId, value: -value })),
   };
 }
 
@@ -303,6 +320,14 @@ async function modoTeste() {
   if (categorias.length === 0 || centros.length === 0)
     throw new Error("A conta do Nibo precisa ter ao menos 1 categoria e 1 centro de custo.");
 
+  // pagamento exige categoria comum de SAÍDA (out); "in" e as especiais
+  // (juros/multa/desconto) são recusadas pela API
+  const catTeste =
+    categorias.find((c) => c?.type === "out" && c?.isEditable) ??
+    categorias.find((c) => c?.type === "out") ??
+    categorias[0];
+  out(`    (categoria do teste: ${nomeCategoria(catTeste)})`);
+
   const nomeTeste = "TESTE APP BOLETOS (pode apagar)";
   out(`3/6 Criando fornecedor de teste "${nomeTeste}"…`);
   const criado = await nibo("POST", "/suppliers", { name: nomeTeste });
@@ -318,42 +343,48 @@ async function modoTeste() {
     .toISOString()
     .slice(0, 10);
   const referencia = `APPBOLETOS-TESTE-${Date.now()}`;
-  out("4/6 Criando lançamento de teste (R$ 0,01, hoje)…");
-  const resposta = await nibo("POST", "/schedules/debit", {
-    stakeholderId: fornecedorId,
-    description: "TESTE do app boletos — pode apagar",
-    reference: referencia,
-    scheduleDate: hoje,
-    dueDate: hoje,
-    accrualDate: hoje,
-    categories: [{ categoryId: idCategoria(categorias[0]), value: 0.01 }],
-    costCenterValueType: 0,
-    costCenters: [{ costCenterId: idCentro(centros[0]), value: 0.01 }],
-  });
-  let scheduleId = resposta?.scheduleId ?? resposta?.id;
-  out("    OK — lançamento criado.");
-
-  out("5/6 Apagando o lançamento de teste…");
-  if (!scheduleId) {
-    const achados = await listarTudo(
-      `/schedules/debit?$filter=reference eq '${referencia}'`,
-      "dueDate",
-    );
-    scheduleId = achados[0]?.scheduleId ?? achados[0]?.id;
-  }
-  if (scheduleId) {
-    await nibo("DELETE", `/schedules/debit/${scheduleId}`);
-    out("    OK — lançamento apagado.");
-  } else {
-    out(`    ⚠ Não achei o id do lançamento de teste. APAGUE NO NIBO manualmente (referência ${referencia}).`);
-  }
-
-  out("6/6 Apagando o fornecedor de teste…");
   try {
-    await nibo("DELETE", `/suppliers/${fornecedorId}`);
-    out("    OK — fornecedor apagado.");
-  } catch (e) {
-    out(`    ⚠ Não consegui apagar o fornecedor de teste (${e.message}). Apague no Nibo manualmente.`);
+    out("4/6 Criando lançamento de teste (R$ 0,01, hoje)…");
+    const resposta = await nibo("POST", "/schedules/debit", {
+      stakeholderId: fornecedorId,
+      description: "TESTE do app boletos — pode apagar",
+      reference: referencia,
+      scheduleDate: hoje,
+      dueDate: hoje,
+      accrualDate: hoje,
+      // pagamento = valor NEGATIVO (regra da API; positivos são recusados)
+      categories: [{ categoryId: idCategoria(catTeste), value: -0.01 }],
+      costCenterValueType: 0,
+      costCenters: [{ costCenterId: idCentro(centros[0]), value: -0.01 }],
+    });
+    let scheduleId = resposta?.scheduleId ?? resposta?.id;
+    out("    OK — lançamento criado.");
+
+    out("5/6 Apagando o lançamento de teste…");
+    // a busca por referência tem um pequeno atraso de indexação — insiste um pouco
+    for (let tentativa = 0; tentativa < 4 && !scheduleId; tentativa++) {
+      if (tentativa > 0) await new Promise((r) => setTimeout(r, 3000));
+      const achados = await listarTudo(
+        `/schedules/debit?$filter=reference eq '${referencia}'`,
+        "dueDate",
+      );
+      scheduleId = achados[0]?.scheduleId ?? achados[0]?.id;
+    }
+    if (scheduleId) {
+      await nibo("DELETE", `/schedules/debit/${scheduleId}`);
+      out("    OK — lançamento apagado.");
+    } else {
+      out(`    ⚠ Não achei o id do lançamento de teste. APAGUE NO NIBO manualmente (referência ${referencia}).`);
+    }
+  } finally {
+    // o fornecedor de teste é apagado MESMO se a criação do lançamento falhar
+    out("6/6 Apagando o fornecedor de teste…");
+    try {
+      await nibo("DELETE", `/suppliers/${fornecedorId}`);
+      out("    OK — fornecedor apagado.");
+    } catch (e) {
+      out(`    ⚠ Não consegui apagar o fornecedor de teste (${e.message}). Apague no Nibo manualmente.`);
+    }
   }
   out("");
   out("✅ TESTE COMPLETO: o token funciona e a conta aceita criar/apagar lançamentos.");
@@ -366,7 +397,7 @@ async function modoEnviar(lancamentos) {
     listarCentros(),
     listarTudo("/suppliers", "name"),
   ]);
-  const mapaCategorias = new Map(categorias.map((c) => [normalizar(nomeCategoria(c)), idCategoria(c)]));
+  const mapaCategorias = mapaCategoriasSaida(categorias);
   const mapaCentros = new Map(centros.map((c) => [normalizar(nomeCentro(c)), idCentro(c)]));
   const mapaFornecedores = new Map(fornecedores.map((f) => [normalizar(nomeFornecedor(f)), idFornecedor(f)]));
 
