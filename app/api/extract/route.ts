@@ -5,13 +5,16 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Modelo principal y respaldos: si uno agota su cuota (429) O SE CUELGA
-// (timeout), se pasa automáticamente al siguiente de la lista.
-// Ago/2026: gemini-flash-latest empezó a colgarse (90s sin responder) mientras
-// los "lite" responden en 1-3s y leen bien los cupones — por eso lite primero.
+// Modelo principal y respaldos: si uno agota su cuota (429), está sobrecargado
+// (5xx "high demand") o se cuelga (timeout), se pasa al siguiente de la lista.
+// Ago/2026: gemini-flash-latest empezó a colgarse; los "lite" responden en 1-3s.
+// Set/2026: apagón amplio de "high demand" en el nivel gratuito — lista larga
+// para cazar el modelo que esté vivo (3.6/3.8 son generaciones más nuevas).
 const MODELOS = [
   process.env.GEMINI_MODEL || "gemini-flash-lite-latest",
   "gemini-3.1-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.8-flash",
   "gemini-flash-latest",
 ].filter((m, i, arr) => arr.indexOf(m) === i);
 
@@ -180,31 +183,40 @@ export async function POST(req: Request) {
         data = await respuesta.json();
         if (respuesta.ok) break porModelo;
         if (!REINTENTABLES.has(respuesta.status)) break porModelo;
-        if (intento === 2) {
-          // Intentos agotados: con 429 probamos el siguiente modelo; con
-          // errores transitorios (500/502/...) ya no insistimos.
-          if (respuesta.status === 429 && !ultimoModelo) continue porModelo;
-          break porModelo;
-        }
-        if (respuesta.status === 429) {
-          // Cuota agotada: si hay modelo de respaldo, pasamos directo a él.
+        // Cuota agotada (429) o sobrecarga/errores del Google (5xx): pasamos
+        // DIRECTO al siguiente modelo — insistir en el mismo desperdicia tiempo
+        // (antes, un 503 agotaba los intentos y ni se probaban los respaldos).
+        if (respuesta.status === 429 || respuesta.status >= 500) {
           if (!ultimoModelo) continue porModelo;
-          // Último modelo: esperamos lo que pide Google ("retry in Xs").
+          if (intento === 2) break porModelo;
+          // Último modelo de la lista: aquí sí esperamos y reintentamos.
           const seg = /retry in ([0-9.]+)s/i.exec(data?.error?.message ?? "");
-          const espera = seg ? Math.min(Number(seg[1]) * 1000 + 500, 20000) : 11000;
+          const espera =
+            respuesta.status === 429
+              ? seg
+                ? Math.min(Number(seg[1]) * 1000 + 500, 20000)
+                : 11000
+              : 2000 * (intento + 1);
           await new Promise((r) => setTimeout(r, espera));
         } else {
+          // 408 u otro transitorio raro: reintento corto en el mismo modelo.
+          if (intento === 2) break porModelo;
           await new Promise((r) => setTimeout(r, 800 * (intento + 1)));
         }
       }
     }
 
     if (!respuesta || !respuesta.ok) {
-      const msg = data?.error?.message || `HTTP ${respuesta?.status ?? "?"}`;
-      return Response.json(
-        { error: `Gemini (tras reintentos): ${msg}` },
-        { status: 502 },
-      );
+      const cru = data?.error?.message || `HTTP ${respuesta?.status ?? "?"}`;
+      // Mensagem amigável quando o Google inteiro está sobrecarregado.
+      const sobrecarga =
+        respuesta?.status === 503 || /high demand|overloaded/i.test(cru);
+      const msg = sobrecarga
+        ? "A IA do Google está sobrecarregada agora (instabilidade temporária " +
+          "do próprio Google, comum em horários de pico). A nota NÃO foi perdida: " +
+          "aguarde alguns minutos e envie de novo."
+        : `Gemini (após tentativas): ${cru}`;
+      return Response.json({ error: msg }, { status: 502 });
     }
 
     const texto: string =
