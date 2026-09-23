@@ -440,3 +440,26 @@ td.num {
   font-size: 13px;
   margin-bottom: 18px;
 }
+
+/* ---------- PWA no iPhone (app instalado, tela cheia) ---------- */
+/* Faixa azul fixa atrás da barra de status (relógio/bateria ficam sobre o azul
+   da marca em todas as telas, inclusive no login). Fora do app instalado,
+   env(safe-area-inset-top) = 0 e nada muda. */
+body::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top);
+  background: var(--primary);
+  z-index: 60;
+}
+/* O conteúdo da barra do app começa abaixo da barra de status */
+.topbar {
+  padding-top: calc(12px + env(safe-area-inset-top));
+}
+/* Respiro extra para a barrinha de gesto do iPhone (parte de baixo) */
+.wrap {
+  padding-bottom: calc(96px + env(safe-area-inset-bottom));
+}
