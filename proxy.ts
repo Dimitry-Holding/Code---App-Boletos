@@ -36,7 +36,11 @@ export async function proxy(request: NextRequest) {
 
   const ruta = request.nextUrl.pathname;
   const esRutaPublica =
-    ruta === "/login" || ruta.startsWith("/auth") || ruta === "/api/health";
+    ruta === "/login" ||
+    ruta.startsWith("/auth") ||
+    ruta === "/api/health" ||
+    // o navegador baixa o manifesto do PWA sem cookies de sessão
+    ruta === "/manifest.webmanifest";
 
   if (!user && !esRutaPublica) {
     const url = request.nextUrl.clone();
