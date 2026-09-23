@@ -335,7 +335,14 @@ export default function ConductorApp({
         body: JSON.stringify(extractBody),
       });
       const data = (await resp.json()) as Extraccion & { error?: string };
-      if (!resp.ok) throw new Error(data.error || "Erro ao processar.");
+      if (!resp.ok) {
+        // o servidor já registrou esta falha no monitoramento (🩺 Erros)
+        const e = new Error(data.error || "Erro ao processar.") as Error & {
+          jaRegistrado?: boolean;
+        };
+        e.jaRegistrado = true;
+        throw e;
+      }
 
       // La IA pre-selecciona la tarjeta si los 4 dígitos coinciden con una del usuario.
       const cartaoMatch = cartoes.find((c) => c.ultimos4 === data.ultimos4);
@@ -350,7 +357,16 @@ export default function ConductorApp({
       subido = null; // éxito: el PDF queda como captura para guardar
       setEstado("revision");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erro desconhecido.");
+      const msg = err instanceof Error ? err.message : "Erro desconhecido.";
+      setError(msg);
+      // reporta ao monitoramento do admin (erros do servidor já foram registrados lá)
+      if (!(err as { jaRegistrado?: boolean })?.jaRegistrado) {
+        fetch("/api/log-error", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ origem: "app", mensagem: msg }),
+        }).catch(() => {});
+      }
       setEstado("inicio");
       setCaptura(null);
       if (subido) await supabase.storage.from("notas").remove([subido]);

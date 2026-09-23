@@ -1,6 +1,19 @@
 import { type Extraccion } from "@/lib/evento";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { registrarErro } from "@/lib/log-erro";
+
+/** Registra uma falha da extração no monitoramento (com o usuário, se houver). */
+async function logExtract(mensagem: string, detalhe?: string) {
+  let uid: string | null = null;
+  try {
+    const supa = await createClient();
+    uid = (await supa.auth.getUser()).data.user?.id ?? null;
+  } catch {
+    /* sem usuário */
+  }
+  await registrarErro("extract", mensagem, detalhe, uid);
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -216,6 +229,7 @@ export async function POST(req: Request) {
           "do próprio Google, comum em horários de pico). A nota NÃO foi perdida: " +
           "aguarde alguns minutos e envie de novo."
         : `Gemini (após tentativas): ${cru}`;
+      await logExtract(msg, `HTTP ${respuesta?.status ?? "timeout"} | ${cru} | modelos: ${MODELOS.join(", ")}`);
       return Response.json({ error: msg }, { status: 502 });
     }
 
@@ -228,6 +242,7 @@ export async function POST(req: Request) {
     if (!texto) {
       const motivo =
         data?.candidates?.[0]?.finishReason || data?.promptFeedback?.blockReason;
+      await logExtract(`A IA não devolveu conteúdo${motivo ? ` (${motivo})` : ""}.`);
       return Response.json(
         { error: `Gemini no devolvió contenido${motivo ? ` (${motivo})` : ""}.` },
         { status: 422 },
@@ -236,6 +251,7 @@ export async function POST(req: Request) {
 
     const objeto = extraerJSON(texto);
     if (!objeto) {
+      await logExtract("A IA não devolveu um JSON válido.", texto.slice(0, 300));
       return Response.json(
         { error: "La IA no devolvió un JSON válido." },
         { status: 422 },
@@ -245,6 +261,7 @@ export async function POST(req: Request) {
     return Response.json(normalizar(objeto, categorias));
   } catch (err) {
     const mensaje = err instanceof Error ? err.message : "Error desconocido";
+    await logExtract(`Erro ao processar com o Gemini: ${mensaje}`);
     return Response.json(
       { error: `Error al procesar con Gemini: ${mensaje}` },
       { status: 502 },

@@ -19,6 +19,16 @@ import TopBar from "./TopBar";
 
 type Perfil = { id: string; nome: string };
 
+/** Linha da tabela de monitoramento `erros_app` (painel 🩺 Erros). */
+type ErroApp = {
+  id: number;
+  criado_em: string;
+  origem: string;
+  mensagem: string;
+  detalhe: string | null;
+  user_id: string | null;
+};
+
 function isoHoje() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
@@ -53,6 +63,10 @@ export default function AdminApp({
   const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
   // nota cuja observação (descrição) está aberta na tabela
   const [obsAberta, setObsAberta] = useState<number | null>(null);
+  // painel de monitoramento de erros (🩺)
+  const [verErros, setVerErros] = useState(false);
+  const [erros, setErros] = useState<ErroApp[] | null>(null);
+  const [errosFalha, setErrosFalha] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -293,6 +307,34 @@ export default function AdminApp({
     }
   }
 
+  /** Abre/fecha o painel 🩺 Erros, recarregando a lista a cada abertura. */
+  async function abrirErros() {
+    if (verErros) {
+      setVerErros(false);
+      return;
+    }
+    setVerErros(true);
+    setErros(null);
+    const { data, error } = await supabase
+      .from("erros_app")
+      .select("*")
+      .order("id", { ascending: false })
+      .limit(50);
+    if (error) {
+      setErrosFalha(true);
+      setErros([]);
+      return;
+    }
+    setErrosFalha(false);
+    setErros((data as ErroApp[]) ?? []);
+  }
+
+  async function limparErros() {
+    if (!confirm("Apagar todos os erros registrados?")) return;
+    await supabase.from("erros_app").delete().gte("id", 0);
+    setErros([]);
+  }
+
   /** Borra una nota (y su foto). Solo el admin. */
   async function eliminar(ev: Evento) {
     if (!confirm(`Excluir ${codigoId(ev.id)} (${ev.fornecedor ?? ""})?`)) return;
@@ -322,6 +364,15 @@ export default function AdminApp({
           <span>Notas fiscais</span>
           <span className="count">{filtrados.length}</span>
           <span className="spacer" />
+          {podeGerenciar && (
+            <button
+              className="btn btn-light"
+              onClick={abrirErros}
+              title="Erros registrados automaticamente pelo app"
+            >
+              🩺 Erros
+            </button>
+          )}
           {podeGerenciar && (
             <Link href="/usuarios" className="btn btn-light">
               👥 Usuários
@@ -359,6 +410,57 @@ export default function AdminApp({
             ⬇️ Excel
           </button>
         </div>
+
+        {verErros && (
+          <div className="card">
+            <div className="row">
+              <strong>🩺 Erros registrados pelo app</strong>
+              <span className="count">{erros?.length ?? 0}</span>
+              <span className="spacer" />
+              {erros !== null && erros.length > 0 && (
+                <button className="btn-danger-ghost" onClick={limparErros}>
+                  🗑️ Limpar
+                </button>
+              )}
+            </div>
+            {errosFalha ? (
+              <p className="note">
+                Não foi possível carregar. A migração 6 (`supabase/migration_6.sql`)
+                já foi aplicada no Supabase?
+              </p>
+            ) : erros === null ? (
+              <div className="status">
+                <div className="spinner" />
+              </div>
+            ) : erros.length === 0 ? (
+              <p className="note">Nenhum erro registrado. 🎉</p>
+            ) : (
+              <div style={{ marginTop: 8, maxHeight: 340, overflowY: "auto" }}>
+                {erros.map((er) => (
+                  <div
+                    key={er.id}
+                    style={{ padding: "8px 0", borderTop: "1px solid var(--border)" }}
+                  >
+                    <div className="note" style={{ margin: 0 }}>
+                      {new Date(er.criado_em).toLocaleString("pt-BR")} ·{" "}
+                      {er.origem === "extract" ? "servidor/IA" : "celular do usuário"} ·{" "}
+                      {er.user_id ? (perfiles[er.user_id] ?? "usuário") : "—"}
+                    </div>
+                    <div style={{ fontSize: 13.5 }}>{er.mensagem}</div>
+                    {er.detalhe && (
+                      <div
+                        className="note"
+                        style={{ margin: 0, fontSize: 11.5, wordBreak: "break-word" }}
+                      >
+                        {er.detalhe}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="card">
           <div className="filters">
