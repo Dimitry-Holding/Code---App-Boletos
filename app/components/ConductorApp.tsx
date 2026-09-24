@@ -81,6 +81,20 @@ export default function ConductorApp({
   const scanRef = useRef<HTMLInputElement>(null);
   // Modo scanner: páginas já capturadas (dataURLs JPEG), viram um único PDF.
   const [paginas, setPaginas] = useState<string[]>([]);
+  // Progresso da leitura (etapa + cronômetro) e retentativa sem refazer a foto
+  const [fase, setFase] = useState("");
+  const [segundos, setSegundos] = useState(0);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const retentativaRef = useRef<{ cap: Captura; body: any } | null>(null);
+
+  useEffect(() => {
+    if (estado !== "procesando") {
+      setSegundos(0);
+      return;
+    }
+    const t = setInterval(() => setSegundos((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [estado]);
 
   const hoy = new Date();
   const [ano, setAno] = useState(hoy.getFullYear());
@@ -265,13 +279,119 @@ export default function ConductorApp({
     }
   }
 
+  /**
+   * Chama a IA; se a CONEXÃO falhar no meio (sinal fraco, app em segundo
+   * plano — o "Load failed" do iPhone), tenta de novo sozinha até 2 vezes.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function extrairComRetentativa(body: any): Promise<Extraccion> {
+    const corpo = JSON.stringify(body);
+    for (let tentativa = 0; ; tentativa++) {
+      try {
+        const resp = await fetch("/api/extract", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: corpo,
+        });
+        const data = (await resp.json()) as Extraccion & { error?: string };
+        if (!resp.ok) {
+          // o servidor já registrou esta falha no monitoramento (🩺 Erros)
+          const e = new Error(data.error || "Erro ao processar.") as Error & {
+            jaRegistrado?: boolean;
+          };
+          e.jaRegistrado = true;
+          throw e;
+        }
+        return data;
+      } catch (err) {
+        if (ehErroDeRede(err) && tentativa < 2) {
+          setFase("A conexão oscilou — tentando de novo…");
+          await new Promise((r) => setTimeout(r, 2500));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
+  /** Extrai os dados e abre a tela de revisão preenchida. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  async function extrairEAbrirRevisao(body: any) {
+    const data = await extrairComRetentativa(body);
+    // La IA pre-selecciona la tarjeta si los 4 dígitos coinciden con una del usuario.
+    const cartaoMatch = cartoes.find((c) => c.ultimos4 === data.ultimos4);
+    setBorrador({
+      ...BORRADOR_VACIO,
+      ...data,
+      ultimos4: cartaoMatch ? cartaoMatch.ultimos4 : "",
+      categoria: categorias.some((c) => c.nome === data.categoria) ? data.categoria : "",
+      // Centro de custo: por defecto el único (o vacío si tiene varios).
+      centro_custo: centros.length === 1 ? centros[0].nome : "",
+    });
+    retentativaRef.current = null;
+    setEstado("revision");
+  }
+
+  /** "Tentar de novo": reusa a foto/PDF guardado, sem capturar nada de novo. */
+  async function tentarDeNovo() {
+    const r = retentativaRef.current;
+    if (!r) return;
+    setError(null);
+    setEstado("procesando");
+    setFase("Lendo a nota com a IA…");
+    try {
+      await extrairEAbrirRevisao(r.body);
+    } catch (err) {
+      const rede = ehErroDeRede(err);
+      const bruto = err instanceof Error ? err.message : String(err);
+      const msg = rede ? MSG_REDE : bruto || "Erro desconhecido.";
+      setError(msg);
+      if (!(err as { jaRegistrado?: boolean })?.jaRegistrado) {
+        fetch("/api/log-error", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            origem: "app",
+            mensagem: msg,
+            detalhe: `retentativa | bruto: ${bruto}`,
+          }),
+        }).catch(() => {});
+      }
+      if (!rede) {
+        // erro definitivo (não é conexão): descarta a captura guardada
+        retentativaRef.current = null;
+        setCaptura(null);
+        if (r.cap.storagePath) {
+          supabase.storage.from("notas").remove([r.cap.storagePath]);
+        }
+      }
+      setEstado("inicio");
+    }
+  }
+
+  /** Descarta a nota que estava guardada para retentativa. */
+  function descartarRetentativa() {
+    const r = retentativaRef.current;
+    retentativaRef.current = null;
+    if (r?.cap.storagePath) {
+      supabase.storage.from("notas").remove([r.cap.storagePath]);
+    }
+    setCaptura(null);
+    setError(null);
+  }
+
   /** Processa um arquivo (foto/PDF) ou uma captura já tratada (fluxo de fotos). */
   async function procesarArchivo(entrada: File | Captura) {
     setError(null);
     setEditId(null);
     setEstado("procesando");
+    setFase("Preparando a foto…");
+    retentativaRef.current = null;
     const previo = captura?.storagePath;
     let subido: string | null = null;
+    let capFinal: Captura | null = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let ultimoBody: any = null;
     try {
       let cap: Captura;
       if (!(entrada instanceof File)) {
@@ -307,6 +427,7 @@ export default function ConductorApp({
       let extractBody: any;
       if (cap.esPdf) {
         if (!(entrada instanceof File)) throw new Error("PDF inválido.");
+        setFase("Enviando o arquivo…");
         const path = `${userId}/${crypto.randomUUID()}.pdf`;
         const up = await supabase.storage
           .from("notas")
@@ -327,48 +448,42 @@ export default function ConductorApp({
         };
       }
       setCaptura(cap);
-      if (previo) supabase.storage.from("notas").remove([previo]);
-
-      const resp = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(extractBody),
-      });
-      const data = (await resp.json()) as Extraccion & { error?: string };
-      if (!resp.ok) {
-        // o servidor já registrou esta falha no monitoramento (🩺 Erros)
-        const e = new Error(data.error || "Erro ao processar.") as Error & {
-          jaRegistrado?: boolean;
-        };
-        e.jaRegistrado = true;
-        throw e;
+      capFinal = cap;
+      ultimoBody = extractBody;
+      if (previo && previo !== cap.storagePath) {
+        supabase.storage.from("notas").remove([previo]);
       }
 
-      // La IA pre-selecciona la tarjeta si los 4 dígitos coinciden con una del usuario.
-      const cartaoMatch = cartoes.find((c) => c.ultimos4 === data.ultimos4);
-      setBorrador({
-        ...BORRADOR_VACIO,
-        ...data,
-        ultimos4: cartaoMatch ? cartaoMatch.ultimos4 : "",
-        categoria: categorias.some((c) => c.nome === data.categoria) ? data.categoria : "",
-        // Centro de custo: por defecto el único (o vacío si tiene varios).
-        centro_custo: centros.length === 1 ? centros[0].nome : "",
-      });
+      setFase("Lendo a nota com a IA…");
+      await extrairEAbrirRevisao(extractBody);
       subido = null; // éxito: el PDF queda como captura para guardar
-      setEstado("revision");
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Erro desconhecido.";
+      const rede = ehErroDeRede(err);
+      const bruto = err instanceof Error ? err.message : String(err);
+      const msg = rede ? MSG_REDE : bruto || "Erro desconhecido.";
       setError(msg);
       // reporta ao monitoramento do admin (erros do servidor já foram registrados lá)
       if (!(err as { jaRegistrado?: boolean })?.jaRegistrado) {
         fetch("/api/log-error", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ origem: "app", mensagem: msg }),
+          body: JSON.stringify({
+            origem: "app",
+            mensagem: msg,
+            detalhe: `bruto: ${bruto} | online: ${typeof navigator === "undefined" ? "?" : navigator.onLine}`,
+          }),
         }).catch(() => {});
       }
+      if (rede && capFinal && ultimoBody) {
+        // conexão caiu: a nota fica guardada para "Tentar de novo" (o PDF
+        // já enviado ao Storage também é mantido)
+        retentativaRef.current = { cap: capFinal, body: ultimoBody };
+        subido = null;
+      } else {
+        retentativaRef.current = null;
+        setCaptura(null);
+      }
       setEstado("inicio");
-      setCaptura(null);
       if (subido) await supabase.storage.from("notas").remove([subido]);
     }
   }
@@ -653,6 +768,25 @@ export default function ConductorApp({
             </p>
 
             {error && <div className="error-box">{error}</div>}
+
+            {error && retentativaRef.current && (
+              <>
+                <button
+                  className="btn btn-primary btn-block"
+                  style={{ marginTop: 10 }}
+                  onClick={tentarDeNovo}
+                >
+                  🔄 Tentar de novo (a nota ficou guardada)
+                </button>
+                <button
+                  className="btn-ghost"
+                  style={{ marginTop: 8 }}
+                  onClick={descartarRetentativa}
+                >
+                  Descartar a nota guardada
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -725,7 +859,14 @@ export default function ConductorApp({
             {previa()}
             <div className="status">
               <div className="spinner" />
-              <div>Lendo o documento com IA…</div>
+              <div>
+                <div>{fase || "Lendo o documento com IA…"}</div>
+                <div className="note" style={{ margin: "2px 0 0" }}>
+                  {segundos}s
+                  {segundos >= 20 &&
+                    " — a IA está mais lenta que o normal, só aguardar…"}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1036,6 +1177,22 @@ export default function ConductorApp({
       </main>
     </>
   );
+}
+
+/** Mensagem amigável quando a CONEXÃO cai no meio da leitura. */
+const MSG_REDE =
+  "A conexão falhou no meio da leitura (sinal fraco?). A nota ficou guardada — " +
+  "toque em “Tentar de novo” quando o sinal voltar.";
+
+/**
+ * Erro de REDE (não de dados): no iPhone aparece como "Load failed", no
+ * Android/desktop como "Failed to fetch". Acontece com sinal fraco ou quando
+ * o app vai para segundo plano durante a leitura.
+ */
+function ehErroDeRede(err: unknown): boolean {
+  if (err instanceof TypeError) return true;
+  const m = err instanceof Error ? err.message : String(err);
+  return /load failed|failed to fetch|network|abort|timed? ?out/i.test(m);
 }
 
 /**
