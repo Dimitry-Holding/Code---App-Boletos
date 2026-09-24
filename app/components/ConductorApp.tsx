@@ -96,6 +96,13 @@ export default function ConductorApp({
     return () => clearInterval(t);
   }, [estado]);
 
+  // etapa atual também num ref: os logs de erro leem o valor real do momento
+  const faseRef = useRef("");
+  function mudarFase(f: string) {
+    faseRef.current = f;
+    setFase(f);
+  }
+
   const hoy = new Date();
   const [ano, setAno] = useState(hoy.getFullYear());
   const [mes, setMes] = useState(hoy.getMonth() + 1);
@@ -305,7 +312,7 @@ export default function ConductorApp({
         return data;
       } catch (err) {
         if (ehErroDeRede(err) && tentativa < 2) {
-          setFase("A conexão oscilou — tentando de novo…");
+          mudarFase("A conexão oscilou — tentando de novo…");
           await new Promise((r) => setTimeout(r, 2500));
           continue;
         }
@@ -338,7 +345,7 @@ export default function ConductorApp({
     if (!r) return;
     setError(null);
     setEstado("procesando");
-    setFase("Lendo a nota com a IA…");
+    mudarFase("Lendo a nota com a IA…");
     try {
       await extrairEAbrirRevisao(r.body);
     } catch (err) {
@@ -353,18 +360,14 @@ export default function ConductorApp({
           body: JSON.stringify({
             origem: "app",
             mensagem: msg,
-            detalhe: `retentativa | bruto: ${bruto}`,
+            detalhe:
+              `retentativa | bruto: ${bruto} | fase: ${faseRef.current}` +
+              ` | stack: ${((err as Error)?.stack ?? "-").slice(0, 300)}`,
           }),
         }).catch(() => {});
       }
-      if (!rede) {
-        // erro definitivo (não é conexão): descarta a captura guardada
-        retentativaRef.current = null;
-        setCaptura(null);
-        if (r.cap.storagePath) {
-          supabase.storage.from("notas").remove([r.cap.storagePath]);
-        }
-      }
+      // a nota segue guardada para nova tentativa (IA fora do ar passa);
+      // quem decide desistir é o usuário, pelo botão "Descartar"
       setEstado("inicio");
     }
   }
@@ -385,7 +388,7 @@ export default function ConductorApp({
     setError(null);
     setEditId(null);
     setEstado("procesando");
-    setFase("Preparando a foto…");
+    mudarFase("Preparando a foto…");
     retentativaRef.current = null;
     const previo = captura?.storagePath;
     let subido: string | null = null;
@@ -427,7 +430,7 @@ export default function ConductorApp({
       let extractBody: any;
       if (cap.esPdf) {
         if (!(entrada instanceof File)) throw new Error("PDF inválido.");
-        setFase("Enviando o arquivo…");
+        mudarFase("Enviando o arquivo…");
         const path = `${userId}/${crypto.randomUUID()}.pdf`;
         const up = await supabase.storage
           .from("notas")
@@ -454,7 +457,7 @@ export default function ConductorApp({
         supabase.storage.from("notas").remove([previo]);
       }
 
-      setFase("Lendo a nota com a IA…");
+      mudarFase("Lendo a nota com a IA…");
       await extrairEAbrirRevisao(extractBody);
       subido = null; // éxito: el PDF queda como captura para guardar
     } catch (err) {
@@ -470,13 +473,17 @@ export default function ConductorApp({
           body: JSON.stringify({
             origem: "app",
             mensagem: msg,
-            detalhe: `bruto: ${bruto} | online: ${typeof navigator === "undefined" ? "?" : navigator.onLine}`,
+            detalhe:
+              `bruto: ${bruto} | fase: ${faseRef.current} | online: ` +
+              `${typeof navigator === "undefined" ? "?" : navigator.onLine}` +
+              ` | stack: ${((err as Error)?.stack ?? "-").slice(0, 300)}`,
           }),
         }).catch(() => {});
       }
-      if (rede && capFinal && ultimoBody) {
-        // conexão caiu: a nota fica guardada para "Tentar de novo" (o PDF
-        // já enviado ao Storage também é mantido)
+      if (capFinal && ultimoBody) {
+        // Falhou na fase de LEITURA (conexão caiu OU IA fora do ar): a nota
+        // fica guardada para "Tentar de novo" — inclusive o PDF já no Storage.
+        // Erros antes disso (formato inválido, PDF grande) descartam normal.
         retentativaRef.current = { cap: capFinal, body: ultimoBody };
         subido = null;
       } else {
