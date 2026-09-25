@@ -39,6 +39,8 @@ export async function proxy(request: NextRequest) {
     ruta === "/login" ||
     ruta.startsWith("/auth") ||
     ruta === "/api/health" ||
+    // o cron da Vercel chama o backup sem sessão (a rota valida sozinha)
+    ruta === "/api/backup" ||
     // o navegador baixa o manifesto do PWA sem cookies de sessão
     ruta === "/manifest.webmanifest";
 
