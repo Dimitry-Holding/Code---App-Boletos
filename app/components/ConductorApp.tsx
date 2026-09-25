@@ -519,6 +519,19 @@ export default function ConductorApp({
       setError(v);
       return;
     }
+    // Possível duplicata? (mesmo fornecedor, data, valor e cartão já lançados)
+    const dup = achaDuplicata(eventos, borrador);
+    if (dup) {
+      const confirma = confirm(
+        "⚠️ Você já lançou uma nota igual a esta:\n\n" +
+          `${codigoId(dup.id)} — ${dup.fornecedor ?? ""}\n` +
+          `${dup.data_documento ?? "sem data"} · ${dup.moeda ?? "BRL"} ` +
+          `${Number(dup.valor ?? 0).toFixed(2)} · cartão ••${dup.ultimos4 ?? ""}\n\n` +
+          "Se for a MESMA compra, toque em Cancelar (a nota já está salva).\n" +
+          "Se for outra compra parecida, toque em OK para lançar mesmo assim.",
+      );
+      if (!confirma) return;
+    }
     setGuardando(true);
     setError(null);
     try {
@@ -1183,6 +1196,22 @@ export default function ConductorApp({
         </div>
       </main>
     </>
+  );
+}
+
+/**
+ * Nota já lançada com mesmo fornecedor, data, valor e cartão = possível
+ * duplicata (ex.: o mesmo cupom fotografado duas vezes). A lista `eventos`
+ * do usuário só contém as notas dele (RLS), então a comparação é local.
+ */
+function achaDuplicata(eventos: Evento[], b: Borrador): Evento | undefined {
+  const norm = (s: string | null | undefined) => (s ?? "").trim().toLowerCase();
+  return eventos.find(
+    (e) =>
+      norm(e.fornecedor) === norm(b.fornecedor) &&
+      (e.data_documento ?? "") === b.data_documento &&
+      Math.abs(Number(e.valor ?? 0) - b.valor) < 0.005 &&
+      (e.ultimos4 ?? "") === b.ultimos4,
   );
 }
 
