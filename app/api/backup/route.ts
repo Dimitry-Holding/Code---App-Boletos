@@ -8,6 +8,8 @@ export const maxDuration = 60;
  * Backup automático dos dados: gera um JSON com TODAS as tabelas e guarda no
  * bucket privado "backups" do Storage. Disparado semanalmente pelo cron da
  * Vercel (vercel.json) e também manualmente por um admin logado.
+ * O cron da Vercel é "melhor esforço": uma execução pode falhar sem aviso,
+ * então vale conferir de vez em quando se o arquivo da semana existe.
  * Mantém as últimas 12 cópias (~3 meses). As fotos não entram (ficam no
  * próprio Storage); o backup cobre os DADOS.
  */
@@ -59,18 +61,35 @@ async function ehAdminLogado(): Promise<boolean> {
 }
 
 export async function GET(req: Request) {
-  // Autorizado: cron da Vercel (ou CRON_SECRET, se configurado) ou admin logado.
-  // A resposta traz só um RESUMO (contagens) — nunca os dados em si.
-  const auth = req.headers.get("authorization");
-  const viaCron =
-    req.headers.get("x-vercel-cron") !== null ||
-    (!!process.env.CRON_SECRET && auth === `Bearer ${process.env.CRON_SECRET}`);
-  if (!viaCron && !(await ehAdminLogado())) {
+  // Quem pode disparar:
+  //  - o agendador da Vercel: com CRON_SECRET definido, ele manda
+  //    "Authorization: Bearer <segredo>" e só isso é aceito; sem o segredo,
+  //    vale o cabeçalho x-vercel-cron-schedule que toda chamada de cron traz;
+  //  - um admin logado (disparo manual pelo navegador).
+  const segredo = process.env.CRON_SECRET;
+  const viaCron = segredo
+    ? req.headers.get("authorization") === `Bearer ${segredo}`
+    : req.headers.get("x-vercel-cron-schedule") !== null;
+  const viaAdmin = !viaCron && (await ehAdminLogado());
+  if (!viaCron && !viaAdmin) {
     return Response.json({ error: "Não autorizado." }, { status: 401 });
   }
 
   try {
     const admin = createAdminClient();
+    const nome = `backup_${new Date().toISOString().slice(0, 10)}.json`;
+
+    // O cabeçalho do cron pode ser forjado por quem conhece a URL. Por isso a
+    // chamada automática faz no máximo UM backup por dia e nunca devolve
+    // contagens; o resumo completo é só para o admin logado.
+    if (!viaAdmin) {
+      const hoje = await admin.storage
+        .from("backups")
+        .list("", { limit: 1, search: nome });
+      if ((hoje.data ?? []).some((f: { name: string }) => f.name === nome)) {
+        return Response.json({ ok: true });
+      }
+    }
 
     const conteudo: Record<string, unknown> = {
       gerado_em: new Date().toISOString(),
@@ -88,7 +107,6 @@ export async function GET(req: Request) {
       .createBucket("backups", { public: false })
       .catch(() => undefined);
 
-    const nome = `backup_${new Date().toISOString().slice(0, 10)}.json`;
     const corpo = JSON.stringify(conteudo);
     const up = await admin.storage
       .from("backups")
@@ -110,6 +128,7 @@ export async function GET(req: Request) {
       await admin.storage.from("backups").remove(antigos);
     }
 
+    if (!viaAdmin) return Response.json({ ok: true });
     return Response.json({
       ok: true,
       arquivo: nome,

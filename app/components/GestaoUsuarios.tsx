@@ -177,8 +177,18 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
     if (error) return setErro("Erro ao atualizar vencimento: " + error.message);
     await cargarDetalle(u);
   }
-  async function removeCartao(u: Usuario, id: number) {
-    await supabase.from("cartoes").delete().eq("id", id);
+  async function removeCartao(u: Usuario, c: Cartao) {
+    // Sem cartão o usuário não consegue lançar nota: nunca apagar num toque só.
+    const ultimo = cartoes.length === 1;
+    const ok = confirm(
+      `Remover o cartão ${labelCartao(c)} de ${u.nome}?` +
+        (ultimo
+          ? "\n\nÉ o ÚNICO cartão dele: sem cartão, ele não consegue lançar notas."
+          : ""),
+    );
+    if (!ok) return;
+    const { error } = await supabase.from("cartoes").delete().eq("id", c.id);
+    if (error) return setErro("Erro ao remover cartão: " + error.message);
     await cargarDetalle(u);
   }
 
@@ -192,8 +202,18 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
     limpiar();
     await cargarDetalle(u);
   }
-  async function removeItem(u: Usuario, tabla: string, id: number) {
-    await supabase.from(tabla).delete().eq("id", id);
+  async function removeItem(u: Usuario, tabla: string, id: number, nome: string) {
+    const lista = tabla === "categorias" ? categorias : centros;
+    const tipo = tabla === "categorias" ? "a categoria" : "o centro de custo";
+    const ok = confirm(
+      `Remover ${tipo} "${nome}" de ${u.nome}?` +
+        (lista.length === 1
+          ? "\n\nÉ o ÚNICO item desse tipo: sem ele, o usuário não consegue lançar notas."
+          : ""),
+    );
+    if (!ok) return;
+    const { error } = await supabase.from(tabla).delete().eq("id", id);
+    if (error) return setErro("Erro ao remover: " + error.message);
     await cargarDetalle(u);
   }
 
@@ -330,7 +350,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                               >
                                 📅
                               </button>
-                              <button className="btn-ghost" onClick={() => removeCartao(u, c.id)}>✕</button>
+                              <button className="btn-ghost" onClick={() => removeCartao(u, c)}>✕</button>
                             </div>
                           ))}
                         </div>
@@ -369,7 +389,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                             <div key={c.id} className="row" style={{ padding: "4px 0" }}>
                               <span>{c.nome}</span>
                               <span className="spacer" />
-                              <button className="btn-ghost" onClick={() => removeItem(u, "centros_custo", c.id)}>✕</button>
+                              <button className="btn-ghost" onClick={() => removeItem(u, "centros_custo", c.id, c.nome)}>✕</button>
                             </div>
                           ))}
                         </div>
@@ -392,7 +412,7 @@ export default function GestaoUsuarios({ nome }: { nome: string }) {
                             <div key={c.id} className="row" style={{ padding: "4px 0" }}>
                               <span>{c.nome}</span>
                               <span className="spacer" />
-                              <button className="btn-ghost" onClick={() => removeItem(u, "categorias", c.id)}>✕</button>
+                              <button className="btn-ghost" onClick={() => removeItem(u, "categorias", c.id, c.nome)}>✕</button>
                             </div>
                           ))}
                         </div>
