@@ -463,3 +463,268 @@ body::before {
 .wrap {
   padding-bottom: calc(96px + env(safe-area-inset-bottom));
 }
+
+/* ---------- Dashboard de gastos (só admin) ---------- */
+.dz-root {
+  --dz-serie: #2563eb; /* uma série = uma cor só, em todos os gráficos */
+  --dz-grade: #e2e8f0; /* linhas de grade: um passo fora do fundo */
+  --dz-base: #cbd5e1; /* linha de base do eixo */
+}
+.dz-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dz-chip {
+  cursor: pointer;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.dz-chip.ativo {
+  background: var(--primary-soft);
+  border-color: var(--primary-2);
+  color: var(--primary);
+}
+
+/* 4 indicadores: 4 em linha, 2x2 em tela média, empilhados no celular
+   (nunca 3 + 1 sobrando) */
+.dz-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+@media (max-width: 980px) {
+  .dz-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .dz-kpis {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.dz-kpis .card {
+  margin-top: 0;
+  min-width: 0;
+}
+.dz-kpi-rotulo {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.dz-kpi-valor {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+.dz-kpi-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.dz-titulo {
+  font-size: 15px;
+  font-weight: 700;
+}
+.dz-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+.dz-duas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  column-gap: 16px;
+}
+.dz-duas .card {
+  min-width: 0;
+}
+
+/* Colunas no tempo: marcas finas, grade em fio, base reta */
+.dz-grafico {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  margin-top: 22px;
+}
+.dz-eixo-y,
+.dz-area {
+  position: relative;
+  height: 200px;
+}
+.dz-eixo-y span {
+  position: absolute;
+  right: 8px;
+  transform: translateY(50%);
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.dz-grade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--dz-grade);
+}
+.dz-grade.base {
+  background: var(--dz-base);
+}
+.dz-colunas {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+.dz-vaga {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  align-items: center;
+  outline: none;
+}
+.dz-coluna {
+  width: min(24px, 70%);
+  background: var(--dz-serie);
+  border-radius: 4px 4px 0 0;
+}
+.dz-vaga:hover .dz-coluna,
+.dz-vaga:focus-visible .dz-coluna,
+.dz-linha:hover .dz-barra,
+.dz-linha:focus-visible .dz-barra {
+  filter: brightness(1.25);
+}
+.dz-vaga:focus-visible,
+.dz-linha:focus-visible {
+  outline: 2px solid var(--primary-2);
+  outline-offset: -2px;
+  border-radius: 6px;
+}
+.dz-topo {
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  margin-bottom: 3px;
+}
+.dz-eixo-x {
+  display: flex;
+  margin-top: 6px;
+}
+.dz-eixo-x span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.dz-detalhes {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.dz-detalhes summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.dz-detalhes table {
+  margin-top: 8px;
+}
+.dz-detalhes thead th {
+  position: static;
+}
+.dz-detalhes th.num {
+  text-align: right;
+}
+
+/* Barras horizontais: nome, barra e valor na mesma linha */
+.dz-lista {
+  display: grid;
+  gap: 2px;
+  margin-top: 12px;
+}
+.dz-linha {
+  display: grid;
+  grid-template-columns: minmax(0, 32%) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 7px 6px;
+  border-radius: 8px;
+  outline: none;
+}
+.dz-linha:hover {
+  background: var(--surface-2);
+}
+.dz-nome {
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dz-trilho {
+  display: block;
+  height: 12px;
+}
+.dz-barra {
+  display: block;
+  height: 100%;
+  background: var(--dz-serie);
+  border-radius: 0 4px 4px 0;
+}
+.dz-valor {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+/* Tela estreita: nome e valor em cima, barra embaixo ocupando a largura toda */
+@media (max-width: 640px) {
+  .dz-linha {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .dz-nome {
+    grid-area: 1 / 1;
+  }
+  .dz-valor {
+    grid-area: 1 / 2;
+  }
+  .dz-trilho {
+    grid-area: 2 / 1 / 3 / 3;
+    height: 10px;
+  }
+}
+
+.dz-dica {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-width: 220px;
+  background: #0f172a;
+  color: #fff;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.25);
+}
+.dz-dica strong {
+  font-size: 14px;
+}
+.dz-dica-extra {
+  opacity: 0.75;
+}

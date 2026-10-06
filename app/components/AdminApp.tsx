@@ -15,6 +15,7 @@ import {
   TIPO_PAGAMENTO_LABEL,
 } from "@/lib/evento";
 import { gerarWorkbookNibo } from "@/lib/nibo";
+import { buscarEventos } from "@/lib/eventos-query";
 import TopBar from "./TopBar";
 
 type Perfil = { id: string; nome: string; role?: string };
@@ -53,6 +54,9 @@ export default function AdminApp({
   const [cartoes, setCartoes] = useState<Cartao[]>([]);
   const [perfiles, setPerfiles] = useState<Record<string, string>>({});
   const [cargando, setCargando] = useState(true);
+  // troca de período: mantém a tabela anterior esmaecida até chegar a nova
+  const [recarregando, setRecarregando] = useState(false);
+  const [falhaNotas, setFalhaNotas] = useState<string | null>(null);
 
   const [inicio, setInicio] = useState(isoPrimeiroDiaMes());
   const [fim, setFim] = useState(isoHoje());
@@ -74,19 +78,43 @@ export default function AdminApp({
   const [errosTotal, setErrosTotal] = useState(0);
   const [semConfig, setSemConfig] = useState<SemConfig[]>([]);
 
+  // Notas: só as do período escolhido, lidas em páginas (o Supabase corta
+  // qualquer consulta em 1000 linhas). Recarrega quando as datas mudam.
+  useEffect(() => {
+    let cancelado = false;
+    const t = setTimeout(async () => {
+      setRecarregando(true);
+      try {
+        const evs = await buscarEventos<Evento>(supabase, { inicio, fim });
+        if (cancelado) return;
+        setEventos(evs);
+        setFalhaNotas(null);
+      } catch (err) {
+        if (cancelado) return;
+        setFalhaNotas(err instanceof Error ? err.message : "erro");
+      } finally {
+        if (!cancelado) {
+          setCargando(false);
+          setRecarregando(false);
+        }
+      }
+    }, 350); // espera o usuário terminar de mexer na data
+    return () => {
+      cancelado = true;
+      clearTimeout(t);
+    };
+  }, [supabase, inicio, fim]);
+
   useEffect(() => {
     (async () => {
-      const [{ data: evs }, { data: profs }, { data: cts }] = await Promise.all([
-        supabase.from("eventos").select("*").order("id", { ascending: false }),
+      const [{ data: profs }, { data: cts }] = await Promise.all([
         supabase.from("profiles").select("id, nome, role"),
         supabase.from("cartoes").select("*"),
       ]);
-      setEventos((evs as Evento[]) ?? []);
       setCartoes((cts as Cartao[]) ?? []);
       const mapa: Record<string, string> = {};
       ((profs as Perfil[]) ?? []).forEach((p) => (mapa[p.id] = p.nome));
       setPerfiles(mapa);
-      setCargando(false);
 
       if (!podeGerenciar) return;
       // Monitoramento (só admin): quantos erros há registrados e quais usuários
@@ -99,52 +127,71 @@ export default function AdminApp({
       setErrosTotal(count ?? 0);
       const tem = (lista: unknown, id: string) =>
         ((lista as { user_id: string }[]) ?? []).some((x) => x.user_id === id);
-      const comNota = new Set(((evs as Evento[]) ?? []).map((e) => e.conductor_id));
+      const travados = ((profs as Perfil[]) ?? [])
+        .filter((p) => p.role === "conductor")
+        .map((p) => ({
+          id: p.id,
+          nome: p.nome,
+          faltam: [
+            tem(cts, p.id) ? "" : "cartão",
+            tem(cats, p.id) ? "" : "categoria",
+            tem(ccs, p.id) ? "" : "centro de custo",
+          ].filter(Boolean),
+        }))
+        .filter((s) => s.faltam.length > 0);
+      // "já usava o app" = tem alguma nota em qualquer data (não só no período)
+      const comNotas = await Promise.all(
+        travados.map((s) =>
+          supabase
+            .from("eventos")
+            .select("id", { count: "exact", head: true })
+            .eq("conductor_id", s.id),
+        ),
+      );
       setSemConfig(
-        ((profs as Perfil[]) ?? [])
-          .filter((p) => p.role === "conductor")
-          .map((p) => ({
-            id: p.id,
-            nome: p.nome,
-            faltam: [
-              tem(cts, p.id) ? "" : "cartão",
-              tem(cats, p.id) ? "" : "categoria",
-              tem(ccs, p.id) ? "" : "centro de custo",
-            ].filter(Boolean),
-            jaUsava: comNota.has(p.id),
-          }))
-          .filter((s) => s.faltam.length > 0),
+        travados.map((s, i) => ({ ...s, jaUsava: (comNotas[i].count ?? 0) > 0 })),
       );
     })();
   }, [supabase, podeGerenciar]);
 
-  const usuariosEnDatos = useMemo(() => {
-    const ids = Array.from(new Set(eventos.map((e) => e.conductor_id)));
-    return ids.map((id) => ({ id, nome: perfiles[id] ?? id.slice(0, 8) }));
-  }, [eventos, perfiles]);
+  // As opções dos filtros vêm das notas do período. O valor já escolhido entra
+  // sempre na lista, para o filtro não "sumir" ao trocar para um período em
+  // que ele não tem notas.
+  const comEscolhido = (lista: (string | null)[], escolhido: string) =>
+    Array.from(
+      new Set(
+        [...lista, escolhido === "todos" ? null : escolhido].filter(
+          (x): x is string => !!x,
+        ),
+      ),
+    );
+
+  const usuariosEnDatos = useMemo(
+    () =>
+      comEscolhido(eventos.map((e) => e.conductor_id), usuario).map((id) => ({
+        id,
+        nome: perfiles[id] ?? id.slice(0, 8),
+      })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventos, perfiles, usuario],
+  );
 
   const tarjetas = useMemo(
-    () =>
-      Array.from(
-        new Set(eventos.map((e) => e.ultimos4).filter((x): x is string => !!x)),
-      ).sort(),
-    [eventos],
+    () => comEscolhido(eventos.map((e) => e.ultimos4), tdc).sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventos, tdc],
   );
 
   const centrosEnDatos = useMemo(
-    () =>
-      Array.from(
-        new Set(eventos.map((e) => e.centro_custo).filter((x): x is string => !!x)),
-      ).sort(),
-    [eventos],
+    () => comEscolhido(eventos.map((e) => e.centro_custo), centro).sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventos, centro],
   );
 
   const categoriasEnDatos = useMemo(
-    () =>
-      Array.from(
-        new Set(eventos.map((e) => e.categoria).filter((x): x is string => !!x)),
-      ).sort(),
-    [eventos],
+    () => comEscolhido(eventos.map((e) => e.categoria), categoria).sort(),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventos, categoria],
   );
 
   const filtrados = eventos.filter((e) => {
@@ -413,6 +460,11 @@ export default function AdminApp({
             </button>
           )}
           {podeGerenciar && (
+            <Link href="/dashboard" className="btn btn-light">
+              📊 Dashboard
+            </Link>
+          )}
+          {podeGerenciar && (
             <Link href="/usuarios" className="btn btn-light">
               👥 Usuários
             </Link>
@@ -599,15 +651,26 @@ export default function AdminApp({
             </span>
           </p>
 
+          {falhaNotas && (
+            <div className="error-box">
+              Não foi possível carregar as notas deste período ({falhaNotas}).
+              A tabela abaixo pode estar desatualizada.
+            </div>
+          )}
           {cargando ? (
             <div className="status">
               <div className="spinner" />
               <div>Carregando…</div>
             </div>
           ) : filtrados.length === 0 ? (
-            <p className="note">Nenhuma nota neste período.</p>
+            <p className="note">
+              {recarregando ? "Carregando…" : "Nenhuma nota neste período."}
+            </p>
           ) : (
-            <div className="table-scroll">
+            <div
+              className="table-scroll"
+              style={{ opacity: recarregando ? 0.5 : 1 }}
+            >
               <table>
                 <thead>
                   <tr>
