@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import MonitorErros from "./components/MonitorErros";
 
 /** Telas de abertura do iPhone: um PNG por resolução de aparelho. */
 const SPLASH_IPHONE = [
@@ -53,7 +54,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="pt-BR">
-      <body>{children}</body>
+      <body>
+        <MonitorErros />
+        {children}
+      </body>
     </html>
   );
 }

@@ -17,7 +17,10 @@ import {
 import { gerarWorkbookNibo } from "@/lib/nibo";
 import TopBar from "./TopBar";
 
-type Perfil = { id: string; nome: string };
+type Perfil = { id: string; nome: string; role?: string };
+
+/** Usuário que não consegue lançar notas por falta de cadastro. */
+type SemConfig = { id: string; nome: string; faltam: string[]; jaUsava: boolean };
 
 /** Linha da tabela de monitoramento `erros_app` (painel 🩺 Erros). */
 type ErroApp = {
@@ -67,12 +70,15 @@ export default function AdminApp({
   const [verErros, setVerErros] = useState(false);
   const [erros, setErros] = useState<ErroApp[] | null>(null);
   const [errosFalha, setErrosFalha] = useState(false);
+  // avisos que aparecem sem precisar abrir o painel
+  const [errosTotal, setErrosTotal] = useState(0);
+  const [semConfig, setSemConfig] = useState<SemConfig[]>([]);
 
   useEffect(() => {
     (async () => {
       const [{ data: evs }, { data: profs }, { data: cts }] = await Promise.all([
         supabase.from("eventos").select("*").order("id", { ascending: false }),
-        supabase.from("profiles").select("id, nome"),
+        supabase.from("profiles").select("id, nome, role"),
         supabase.from("cartoes").select("*"),
       ]);
       setEventos((evs as Evento[]) ?? []);
@@ -81,8 +87,36 @@ export default function AdminApp({
       ((profs as Perfil[]) ?? []).forEach((p) => (mapa[p.id] = p.nome));
       setPerfiles(mapa);
       setCargando(false);
+
+      if (!podeGerenciar) return;
+      // Monitoramento (só admin): quantos erros há registrados e quais usuários
+      // estão sem cartão/categoria/centro — sem isso o app deles não lança nota.
+      const [{ data: cats }, { data: ccs }, { count }] = await Promise.all([
+        supabase.from("categorias").select("user_id"),
+        supabase.from("centros_custo").select("user_id"),
+        supabase.from("erros_app").select("id", { count: "exact", head: true }),
+      ]);
+      setErrosTotal(count ?? 0);
+      const tem = (lista: unknown, id: string) =>
+        ((lista as { user_id: string }[]) ?? []).some((x) => x.user_id === id);
+      const comNota = new Set(((evs as Evento[]) ?? []).map((e) => e.conductor_id));
+      setSemConfig(
+        ((profs as Perfil[]) ?? [])
+          .filter((p) => p.role === "conductor")
+          .map((p) => ({
+            id: p.id,
+            nome: p.nome,
+            faltam: [
+              tem(cts, p.id) ? "" : "cartão",
+              tem(cats, p.id) ? "" : "categoria",
+              tem(ccs, p.id) ? "" : "centro de custo",
+            ].filter(Boolean),
+            jaUsava: comNota.has(p.id),
+          }))
+          .filter((s) => s.faltam.length > 0),
+      );
     })();
-  }, [supabase]);
+  }, [supabase, podeGerenciar]);
 
   const usuariosEnDatos = useMemo(() => {
     const ids = Array.from(new Set(eventos.map((e) => e.conductor_id)));
@@ -333,7 +367,11 @@ export default function AdminApp({
     if (!confirm("Apagar todos os erros registrados?")) return;
     await supabase.from("erros_app").delete().gte("id", 0);
     setErros([]);
+    setErrosTotal(0);
   }
+
+  // usuário que já lançava notas e ficou travado = aviso urgente no botão
+  const travadoUrgente = semConfig.some((s) => s.jaUsava);
 
   /** Borra una nota (y su foto). Solo el admin. */
   async function eliminar(ev: Evento) {
@@ -370,7 +408,8 @@ export default function AdminApp({
               onClick={abrirErros}
               title="Erros registrados automaticamente pelo app"
             >
-              🩺 Erros
+              🩺 Erros{errosTotal > 0 ? ` (${errosTotal})` : ""}
+              {travadoUrgente ? " ⚠️" : ""}
             </button>
           )}
           {podeGerenciar && (
@@ -423,6 +462,21 @@ export default function AdminApp({
                 </button>
               )}
             </div>
+            {semConfig.length > 0 && (
+              <div className="error-box" style={{ marginTop: 8 }}>
+                <strong>Usuários que não conseguem lançar notas agora</strong>
+                {semConfig.map((s) => (
+                  <div key={s.id}>
+                    {s.jaUsava ? "⚠️ " : ""}
+                    {s.nome}: sem {s.faltam.join(", ")}
+                    {s.jaUsava ? " (já usava o app)" : " (ainda sem notas)"}
+                  </div>
+                ))}
+                <div className="note" style={{ margin: "4px 0 0" }}>
+                  Corrija em 👥 Usuários.
+                </div>
+              </div>
+            )}
             {errosFalha ? (
               <p className="note">
                 Não foi possível carregar. A migração 6 (`supabase/migration_6.sql`)

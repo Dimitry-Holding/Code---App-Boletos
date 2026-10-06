@@ -81,6 +81,10 @@ export default function ConductorApp({
   const scanRef = useRef<HTMLInputElement>(null);
   // Modo scanner: páginas já capturadas (dataURLs JPEG), viram um único PDF.
   const [paginas, setPaginas] = useState<string[]>([]);
+  // Carga inicial dos dados: distingue "ainda carregando", "falhou" e "carregou"
+  const [carregado, setCarregado] = useState(false);
+  const [falhaCarga, setFalhaCarga] = useState(false);
+  const avisouSemAtribRef = useRef(false);
   // Progresso da leitura (etapa + cronômetro) e retentativa sem refazer a foto
   const [fase, setFase] = useState("");
   const [segundos, setSegundos] = useState(0);
@@ -164,17 +168,30 @@ export default function ConductorApp({
   }, [emRevisao, moedaEstrangeira, borrador.moeda, borrador.data_documento]);
 
   async function cargarTodo() {
-    const [{ data: evs }, { data: cs }, { data: cats }, { data: ccs }] =
-      await Promise.all([
-        supabase.from("eventos").select("*").order("id", { ascending: false }),
-        supabase.from("cartoes").select("*").order("apelido"),
-        supabase.from("categorias").select("*").order("nome"),
-        supabase.from("centros_custo").select("*").order("nome"),
-      ]);
+    const respostas = await Promise.all([
+      supabase.from("eventos").select("*").order("id", { ascending: false }),
+      supabase.from("cartoes").select("*").order("apelido"),
+      supabase.from("categorias").select("*").order("nome"),
+      supabase.from("centros_custo").select("*").order("nome"),
+    ]);
+    // Falha de carga NÃO é "conta sem cartão": mantém o que já havia na tela,
+    // avisa o usuário e registra no painel do admin.
+    const falha = respostas.find((r) => r.error)?.error;
+    if (falha) {
+      setFalhaCarga(true);
+      reportarErro(
+        "Não foi possível carregar os dados do usuário (notas, cartões, categorias).",
+        `bruto: ${falha.message} | online: ${typeof navigator === "undefined" ? "?" : navigator.onLine}`,
+      );
+      return;
+    }
+    const [{ data: evs }, { data: cs }, { data: cats }, { data: ccs }] = respostas;
+    setFalhaCarga(false);
     setEventos((evs as Evento[]) ?? []);
     setCartoes((cs as Cartao[]) ?? []);
     setCategorias((cats as Categoria[]) ?? []);
     setCentros((ccs as CentroCusto[]) ?? []);
+    setCarregado(true);
   }
 
   const eventosFiltrados = eventos.filter((e) => {
@@ -595,7 +612,9 @@ export default function ConductorApp({
       await cargarTodo();
       limparEstado(); // NO borrar el archivo recién guardado
     } catch (e) {
-      setError("Erro ao salvar: " + (e instanceof Error ? e.message : ""));
+      const m = e instanceof Error ? e.message : String(e);
+      setError("Erro ao salvar: " + m);
+      reportarErro("Erro ao salvar nota nova.", `bruto: ${m}`);
     } finally {
       setGuardando(false);
     }
@@ -665,7 +684,9 @@ export default function ConductorApp({
       await cargarTodo();
       cancelar();
     } catch (e) {
-      setError("Erro ao salvar: " + (e instanceof Error ? e.message : ""));
+      const m = e instanceof Error ? e.message : String(e);
+      setError("Erro ao salvar: " + m);
+      reportarErro(`Erro ao salvar edição da nota ${codigoId(editId)}.`, `bruto: ${m}`);
     } finally {
       setGuardando(false);
     }
@@ -706,14 +727,33 @@ export default function ConductorApp({
     const { error } = await supabase.from("eventos").delete().eq("id", ev.id);
     if (error) {
       alert("Não foi possível excluir (talvez já passaram 30 dias).");
+      reportarErro(`Erro ao excluir a nota ${codigoId(ev.id)}.`, `bruto: ${error.message}`);
       return;
     }
     setEventos((prev) => prev.filter((e) => e.id !== ev.id));
   }
 
   const editando = estado === "edicion";
-  const faltaAtribuir =
-    cartoes.length === 0 || categorias.length === 0 || centros.length === 0;
+  // O que falta na conta para poder lançar notas (só vale depois da carga).
+  const faltam = [
+    cartoes.length === 0 ? "cartão" : "",
+    categorias.length === 0 ? "categoria" : "",
+    centros.length === 0 ? "centro de custo" : "",
+  ].filter(Boolean);
+  const faltaAtribuir = carregado && faltam.length > 0;
+  const bloqueado = !carregado || faltaAtribuir;
+  const faltamTxt = faltam.join(", ");
+
+  // Conta sem cartão/categoria/centro: o usuário fica travado e isso não é um
+  // "erro" técnico, então avisamos o admin pelo painel (uma vez por abertura).
+  useEffect(() => {
+    if (!faltaAtribuir || avisouSemAtribRef.current) return;
+    avisouSemAtribRef.current = true;
+    reportarErro(
+      `Usuário não consegue lançar notas: conta sem ${faltamTxt} atribuído.`,
+      "configuração da conta (tela Usuários)",
+    );
+  }, [faltaAtribuir, faltamTxt]);
 
   function previa() {
     if (editando) {
@@ -747,10 +787,17 @@ export default function ConductorApp({
         {estado === "inicio" && (
           <div className="card">
             <strong>Nova nota fiscal</strong>
-            {faltaAtribuir ? (
+            {falhaCarga && !carregado ? (
               <div className="error-box" style={{ marginTop: 10 }}>
-                Sua conta ainda não tem cartões, categorias e/ou centro de custo
-                atribuídos. Peça ao administrador.
+                Não foi possível carregar seus dados (sem conexão?).{" "}
+                <button className="btn-ghost" onClick={cargarTodo}>
+                  🔄 Tentar de novo
+                </button>
+              </div>
+            ) : faltaAtribuir ? (
+              <div className="error-box" style={{ marginTop: 10 }}>
+                Sua conta está sem {faltamTxt} atribuído, por isso os botões
+                abaixo estão desativados. Avise o administrador.
               </div>
             ) : (
               <p className="note" style={{ marginTop: 4 }}>
@@ -760,7 +807,7 @@ export default function ConductorApp({
             <button
               className="btn btn-primary btn-block"
               style={{ marginTop: 12 }}
-              disabled={faltaAtribuir}
+              disabled={bloqueado}
               onClick={() => scanRef.current?.click()}
             >
               📷 Tirar foto
@@ -768,7 +815,7 @@ export default function ConductorApp({
             <button
               className="btn btn-light btn-block"
               style={{ marginTop: 10 }}
-              disabled={faltaAtribuir}
+              disabled={bloqueado}
               onClick={() => galRef.current?.click()}
             >
               🖼️ Carregar da galeria
@@ -776,7 +823,7 @@ export default function ConductorApp({
             <button
               className="btn btn-light btn-block"
               style={{ marginTop: 10 }}
-              disabled={faltaAtribuir}
+              disabled={bloqueado}
               onClick={() => pdfRef.current?.click()}
             >
               📄 Carregar PDF
@@ -1213,6 +1260,15 @@ function achaDuplicata(eventos: Evento[], b: Borrador): Evento | undefined {
       Math.abs(Number(e.valor ?? 0) - b.valor) < 0.005 &&
       (e.ultimos4 ?? "") === b.ultimos4,
   );
+}
+
+/** Registra um problema no painel 🩺 do admin. Nunca lança nem trava a tela. */
+function reportarErro(mensagem: string, detalhe?: string) {
+  fetch("/api/log-error", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ origem: "app", mensagem, detalhe }),
+  }).catch(() => {});
 }
 
 /** Mensagem amigável quando a CONEXÃO cai no meio da leitura. */
