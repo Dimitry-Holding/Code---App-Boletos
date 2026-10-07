@@ -21,7 +21,7 @@ import TopBar from "./TopBar";
 type Perfil = { id: string; nome: string; role?: string };
 
 /** Usuário que não consegue lançar notas por falta de cadastro. */
-type SemConfig = { id: string; nome: string; faltam: string[]; jaUsava: boolean };
+type SemConfig = { id: string; nome: string; faltam: string[] };
 
 /** Linha da tabela de monitoramento `erros_app` (painel 🩺 Erros). */
 type ErroApp = {
@@ -139,7 +139,8 @@ export default function AdminApp({
           ].filter(Boolean),
         }))
         .filter((s) => s.faltam.length > 0);
-      // "já usava o app" = tem alguma nota em qualquer data (não só no período)
+      // Só avisa de quem JÁ lançava notas (em qualquer data) e ficou travado.
+      // Conta que nunca foi usada (ex.: a de teste) não é problema a resolver.
       const comNotas = await Promise.all(
         travados.map((s) =>
           supabase
@@ -148,9 +149,7 @@ export default function AdminApp({
             .eq("conductor_id", s.id),
         ),
       );
-      setSemConfig(
-        travados.map((s, i) => ({ ...s, jaUsava: (comNotas[i].count ?? 0) > 0 })),
-      );
+      setSemConfig(travados.filter((_, i) => (comNotas[i].count ?? 0) > 0));
     })();
   }, [supabase, podeGerenciar]);
 
@@ -418,7 +417,7 @@ export default function AdminApp({
   }
 
   // usuário que já lançava notas e ficou travado = aviso urgente no botão
-  const travadoUrgente = semConfig.some((s) => s.jaUsava);
+  const travadoUrgente = semConfig.length > 0;
 
   /** Borra una nota (y su foto). Solo el admin. */
   async function eliminar(ev: Evento) {
@@ -519,9 +518,7 @@ export default function AdminApp({
                 <strong>Usuários que não conseguem lançar notas agora</strong>
                 {semConfig.map((s) => (
                   <div key={s.id}>
-                    {s.jaUsava ? "⚠️ " : ""}
-                    {s.nome}: sem {s.faltam.join(", ")}
-                    {s.jaUsava ? " (já usava o app)" : " (ainda sem notas)"}
+                    ⚠️ {s.nome}: sem {s.faltam.join(", ")}
                   </div>
                 ))}
                 <div className="note" style={{ margin: "4px 0 0" }}>
