@@ -13,6 +13,7 @@ import {
   valorBRL,
   COLUNAS_EXCEL,
   TIPO_PAGAMENTO_LABEL,
+  formatarData,
 } from "@/lib/evento";
 import { gerarWorkbookNibo } from "@/lib/nibo";
 import { buscarEventos } from "@/lib/eventos-query";
@@ -639,7 +640,8 @@ export default function AdminApp({
           </div>
 
           <p className="note" style={{ marginBottom: 2 }}>
-            Período: <strong>{inicio || "—"}</strong> a <strong>{fim || "—"}</strong>
+            Período: <strong>{formatarData(inicio) || "—"}</strong> a{" "}
+            <strong>{formatarData(fim) || "—"}</strong>
           </p>
           <p style={{ fontSize: 16, fontWeight: 700, color: "var(--primary)", margin: "2px 0 6px" }}>
             Subtotal: R$ {total.toFixed(2)}{" "}
@@ -703,7 +705,7 @@ export default function AdminApp({
                         />
                       </td>
                       <td className="codigo">{codigoId(e.id)}</td>
-                      <td>{e.data_documento || "—"}</td>
+                      <td>{formatarData(e.data_documento) || "—"}</td>
                       <td>{e.fornecedor || "—"}</td>
                       <td className="num">
                         {valorBRL(e).toFixed(2)}

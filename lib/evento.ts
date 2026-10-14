@@ -73,6 +73,39 @@ export type CentroCusto = {
   nome: string;
 };
 
+/**
+ * Data no formato brasileiro (dd/mm/aaaa) a partir do ISO do banco
+ * (aaaa-mm-dd ou timestamp). O ISO fica só no banco e nos cálculos;
+ * em tela, planilha e mensagens a pessoa sempre vê dia/mês/ano.
+ */
+export function formatarData(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const m = String(iso).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : String(iso);
+}
+
+/**
+ * Mensagem legível de qualquer erro (Error, erro do Supabase ou objeto solto).
+ * Evita o "[object Object]" que escondia a causa real nos registros.
+ */
+export function mensagemDeErro(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  if (e && typeof e === "object") {
+    const o = e as Record<string, unknown>;
+    const partes = [o.message, o.error, o.details, o.hint]
+      .filter((x) => typeof x === "string" && x)
+      .join(" | ");
+    const codigo = [o.code, o.status, o.statusCode].find((x) => x != null);
+    if (partes || codigo != null) return `${partes || "erro"}${codigo != null ? ` (código ${codigo})` : ""}`;
+    try {
+      return JSON.stringify(e).slice(0, 300);
+    } catch {
+      /* segue */
+    }
+  }
+  return String(e);
+}
+
 /** Código legible e inmutable del evento (ej: DMT-000123). */
 export function codigoId(id: number): string {
   return "DMT-" + String(id).padStart(6, "0");
@@ -150,7 +183,7 @@ export const COLUNAS_EXCEL: {
   valor: (e: Evento & { conductor_nome?: string }) => string | number;
 }[] = [
   { titulo: "ID", valor: (e) => codigoId(e.id) },
-  { titulo: "Data", valor: (e) => e.data_documento ?? "" },
+  { titulo: "Data", valor: (e) => formatarData(e.data_documento) },
   { titulo: "Fornecedor", valor: (e) => e.fornecedor ?? "" },
   { titulo: "Valor (R$)", valor: (e) => valorBRL(e) },
   { titulo: "Moeda", valor: (e) => e.moeda ?? "" },

@@ -2,6 +2,7 @@ import { type Extraccion } from "@/lib/evento";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarErro } from "@/lib/log-erro";
+import { dataBrasileiraParaIso, corrigirTrocaDiaMes } from "@/lib/datas";
 
 /** Registra uma falha da extração no monitoramento (com o usuário, se houver). */
 async function logExtract(mensagem: string, detalhe?: string) {
@@ -56,6 +57,7 @@ com EXATAMENTE estas chaves:
   "fornecedor": string,
   "valor": number,
   "moeda": string,
+  "data_texto": string,
   "data_documento": string,
   "categoria": string,
   "tipo_pagamento": um de [debito, credito],
@@ -68,13 +70,16 @@ Regras:
 - "fornecedor": razão social ou nome do estabelecimento.
 - "valor": valor total pago, número decimal (ex: 1234.56). Se não houver, 0.
 - "moeda": normalmente "BRL".
-- "data_documento": data do documento em YYYY-MM-DD. Se não aparecer, "".
-  ATENÇÃO ao formato brasileiro: as datas vêm como DIA/MÊS/ANO (ex: 14/07/26,
-  18.06.26, 22/07/2026). Ano com 2 dígitos significa 20XX (26 = 2026, NUNCA
-  2020 nem 2018). "18.06.26-21:46" é 18 de junho de 2026 às 21:46, ou seja,
+- "data_texto": a data da COMPRA/emissão copiada EXATAMENTE como está
+  impressa ou escrita no documento, sem reformatar nem interpretar
+  (ex: "08/10/26", "18.06.26", "22/07/2026", "03 de julho de 2026").
+  Ignore outras datas (validade, vencimento, promoção). Se não houver, "".
+- "data_documento": a mesma data em YYYY-MM-DD. Se não aparecer, "".
+  ATENÇÃO ao formato brasileiro: as datas vêm como DIA/MÊS/ANO — "08/10/26"
+  é 8 de OUTUBRO (2026-10-08), nunca 10 de agosto. Ano com 2 dígitos
+  significa 20XX (26 = 2026, NUNCA 2020 nem 2018). "18.06.26-21:46" é
   2026-06-18. São compras recentes: o ano correto é quase sempre o atual;
-  nunca devolva data no futuro. Ignore outras datas do cupom (validade,
-  vencimento de promoção) — use a data da COMPRA/emissão.
+  nunca devolva data no futuro.
 - "tipo_pagamento": "debito" ou "credito" conforme o cupom. Se não der para saber, "debito".
 - "ultimos4": os últimos 4 dígitos do cartão, se aparecerem. "" se não aparecer.
 - "descricao": resumo curto (uma frase) da compra.
@@ -331,8 +336,13 @@ function normalizar(
 ): Extraccion {
   const cat = comoTexto(o.categoria);
   const tipo = comoTexto(o.tipo_pagamento).toLowerCase();
-  const dataBruta = comoTexto(o.data_documento);
-  const data = validarData(dataBruta);
+  // 1) data lida do texto impresso (regra brasileira); 2) conversão da IA,
+  //    com a defesa contra dia/mês trocados; 3) validação de plausibilidade.
+  const doTexto = dataBrasileiraParaIso(comoTexto(o.data_texto));
+  const daIA = corrigirTrocaDiaMes(comoTexto(o.data_documento));
+  const dataBruta = doTexto || daIA;
+  let data = validarData(dataBruta);
+  if (!data && doTexto && daIA !== doTexto) data = validarData(daIA);
   const dataRejeitada = dataBruta !== "" && data === "";
   return {
     fornecedor: comoTexto(o.fornecedor),

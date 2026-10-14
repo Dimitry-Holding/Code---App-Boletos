@@ -15,6 +15,8 @@ import {
   IOF_TAXA,
   IOF_CATEGORIA,
   MOEDAS,
+  formatarData,
+  mensagemDeErro,
 } from "@/lib/evento";
 import TopBar from "./TopBar";
 
@@ -367,7 +369,7 @@ export default function ConductorApp({
       await extrairEAbrirRevisao(r.body);
     } catch (err) {
       const rede = ehErroDeRede(err);
-      const bruto = err instanceof Error ? err.message : String(err);
+      const bruto = mensagemDeErro(err);
       const msg = rede ? MSG_REDE : bruto || "Erro desconhecido.";
       setError(msg);
       if (!(err as { jaRegistrado?: boolean })?.jaRegistrado) {
@@ -479,7 +481,7 @@ export default function ConductorApp({
       subido = null; // éxito: el PDF queda como captura para guardar
     } catch (err) {
       const rede = ehErroDeRede(err);
-      const bruto = err instanceof Error ? err.message : String(err);
+      const bruto = mensagemDeErro(err);
       const msg = rede ? MSG_REDE : bruto || "Erro desconhecido.";
       setError(msg);
       // reporta ao monitoramento do admin (erros do servidor já foram registrados lá)
@@ -542,7 +544,7 @@ export default function ConductorApp({
       const confirma = confirm(
         "⚠️ Você já lançou uma nota igual a esta:\n\n" +
           `${codigoId(dup.id)} — ${dup.fornecedor ?? ""}\n` +
-          `${dup.data_documento ?? "sem data"} · ${dup.moeda ?? "BRL"} ` +
+          `${formatarData(dup.data_documento) || "sem data"} · ${dup.moeda ?? "BRL"} ` +
           `${Number(dup.valor ?? 0).toFixed(2)} · cartão ••${dup.ultimos4 ?? ""}\n\n` +
           "Se for a MESMA compra, toque em Cancelar (a nota já está salva).\n" +
           "Se for outra compra parecida, toque em OK para lançar mesmo assim.",
@@ -552,35 +554,62 @@ export default function ConductorApp({
     setGuardando(true);
     setError(null);
     try {
+      // Cada etapa tenta de novo UMA vez se falhar: no iPhone a primeira
+      // requisição depois da câmera/segundo plano às vezes cai, e o usuário
+      // via "erro ao salvar" que passava ao tocar Salvar de novo.
+      const segundaChance = async () => {
+        await espera(1500);
+        await supabase.auth.getSession().catch(() => null); // renova o token se expirou
+      };
+
       let path: string;
       if (captura.storagePath) {
         path = captura.storagePath; // PDF ya subido durante la extracción
       } else {
         path = `${userId}/${crypto.randomUUID()}.jpg`;
         const blob = await (await fetch(captura.dataUrl)).blob();
-        const up = await supabase.storage
-          .from("notas")
-          .upload(path, blob, { contentType: captura.mediaType });
-        if (up.error) throw up.error;
+        const enviar = () =>
+          supabase.storage
+            .from("notas")
+            .upload(path, blob, { contentType: captura.mediaType, upsert: true });
+        let erroEnvio: unknown = (await enviar()).error;
+        if (erroEnvio) {
+          await segundaChance();
+          erroEnvio = (await enviar()).error;
+        }
+        if (erroEnvio) throw new Error(`envio da foto: ${mensagemDeErro(erroEnvio)}`);
       }
 
-      const ins = await supabase.from("eventos").insert({
-        conductor_id: userId,
-        fornecedor: borrador.fornecedor || null,
-        valor: borrador.valor || null,
-        moeda: borrador.moeda || "BRL",
-        valor_brl: valorBrlBorrador || null,
-        cambio: moedaEstrangeira ? cambioNum : null,
-        centro_custo: borrador.centro_custo,
-        data_documento: borrador.data_documento || null,
-        categoria: borrador.categoria,
-        tipo_pagamento: borrador.tipo_pagamento,
-        ultimos4: borrador.ultimos4 || null,
-        descricao: borrador.descricao || null,
-        confianca: borrador.confianca,
-        foto_path: path,
-      });
-      if (ins.error) throw ins.error;
+      const inserir = () =>
+        supabase.from("eventos").insert({
+          conductor_id: userId,
+          fornecedor: borrador.fornecedor || null,
+          valor: borrador.valor || null,
+          moeda: borrador.moeda || "BRL",
+          valor_brl: valorBrlBorrador || null,
+          cambio: moedaEstrangeira ? cambioNum : null,
+          centro_custo: borrador.centro_custo,
+          data_documento: borrador.data_documento || null,
+          categoria: borrador.categoria,
+          tipo_pagamento: borrador.tipo_pagamento,
+          ultimos4: borrador.ultimos4 || null,
+          descricao: borrador.descricao || null,
+          confianca: borrador.confianca,
+          foto_path: path,
+        });
+      let erroInsercao: unknown = (await inserir()).error;
+      if (erroInsercao) {
+        await segundaChance();
+        // Se a 1ª gravação chegou ao banco e só a resposta se perdeu, NÃO
+        // duplicar: a foto (foto_path) é única por nota e serve de chave.
+        const { data: jaGravada } = await supabase
+          .from("eventos")
+          .select("id")
+          .eq("foto_path", path)
+          .limit(1);
+        erroInsercao = jaGravada && jaGravada.length > 0 ? null : (await inserir()).error;
+      }
+      if (erroInsercao) throw new Error(`gravação da nota: ${mensagemDeErro(erroInsercao)}`);
 
       // Compra en moneda extranjera: se registra el IOF como una línea aparte
       // (misma foto, misma fecha/tarjeta/centro, categoría "IOF").
@@ -612,9 +641,14 @@ export default function ConductorApp({
       await cargarTodo();
       limparEstado(); // NO borrar el archivo recién guardado
     } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
-      setError("Erro ao salvar: " + m);
-      reportarErro("Erro ao salvar nota nova.", `bruto: ${m}`);
+      const m = mensagemDeErro(e);
+      setError(
+        "Erro ao salvar: " + m + " — a nota continua na tela; toque em Salvar de novo.",
+      );
+      reportarErro(
+        "Erro ao salvar nota nova (mesmo após nova tentativa).",
+        `bruto: ${m} | online: ${typeof navigator === "undefined" ? "?" : navigator.onLine}`,
+      );
     } finally {
       setGuardando(false);
     }
@@ -684,7 +718,7 @@ export default function ConductorApp({
       await cargarTodo();
       cancelar();
     } catch (e) {
-      const m = e instanceof Error ? e.message : String(e);
+      const m = mensagemDeErro(e);
       setError("Erro ao salvar: " + m);
       reportarErro(`Erro ao salvar edição da nota ${codigoId(editId)}.`, `bruto: ${m}`);
     } finally {
@@ -1210,7 +1244,7 @@ export default function ConductorApp({
                   </div>
                   <div className="meta">
                     <span className="codigo">{codigoId(ev.id)}</span>{" "}
-                    {ev.data_documento || "sem data"} · {ev.centro_custo || "—"} ·{" "}
+                    {formatarData(ev.data_documento) || "sem data"} · {ev.centro_custo || "—"} ·{" "}
                     {ev.categoria || "—"} · {ev.ultimos4 ? `••${ev.ultimos4}` : "—"}
                   </div>
                   {ev.descricao && (
@@ -1262,6 +1296,8 @@ function achaDuplicata(eventos: Evento[], b: Borrador): Evento | undefined {
   );
 }
 
+const espera = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /** Registra um problema no painel 🩺 do admin. Nunca lança nem trava a tela. */
 function reportarErro(mensagem: string, detalhe?: string) {
   fetch("/api/log-error", {
@@ -1283,7 +1319,7 @@ const MSG_REDE =
  */
 function ehErroDeRede(err: unknown): boolean {
   if (err instanceof TypeError) return true;
-  const m = err instanceof Error ? err.message : String(err);
+  const m = mensagemDeErro(err);
   return /load failed|failed to fetch|network|abort|timed? ?out/i.test(m);
 }
 

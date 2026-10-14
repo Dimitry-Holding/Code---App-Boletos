@@ -204,7 +204,7 @@ function lerLancamentos(arquivo) {
     };
     if (!partida.lancamento) erros.push(`Linha ${n}: coluna "Lançamento" vazia.`);
     if (!partida.cartao) erros.push(`Linha ${n}: "Cartão" vazio (é o fornecedor do lançamento no Nibo).`);
-    if (!partida.data) erros.push(`Linha ${n}: "Data" vazia ou inválida (use AAAA-MM-DD).`);
+    if (!partida.data) erros.push(`Linha ${n}: "Data" vazia ou inválida (use DD/MM/AAAA).`);
     else if (partida.data < DATA_MINIMA || partida.data > hoje)
       erros.push(
         `Linha ${n}: "Data" ${partida.data} fora do intervalo plausível (${DATA_MINIMA} até hoje). ` +

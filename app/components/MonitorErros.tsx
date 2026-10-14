@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { mensagemDeErro } from "@/lib/evento";
 
 /**
  * Rede de segurança do monitoramento: captura erros de JavaScript que ninguém
@@ -33,7 +34,7 @@ export default function MonitorErros() {
     function aoRejeitar(e: PromiseRejectionEvent) {
       const r = e.reason;
       enviar(
-        r instanceof Error ? r.message : String(r),
+        mensagemDeErro(r),
         `promessa rejeitada | ${(r instanceof Error ? (r.stack ?? "") : "").slice(0, 300)}`,
       );
     }

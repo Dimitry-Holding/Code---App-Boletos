@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { type Evento, type Cartao, codigoId, valorBRL } from "./evento";
+import { type Evento, type Cartao, codigoId, valorBRL, formatarData } from "./evento";
 import CATEGORIAS_NIBO from "../nibo/categorias-nibo.json";
 
 /**
@@ -203,9 +203,9 @@ export function montarLinhasNibo(
         : e.ultimos4
           ? `Cartao ${e.ultimos4}`
           : "",
-      ["Data"]: e.data_documento ?? "",
+      ["Data"]: formatarData(e.data_documento),
       ["Vencimento"]: e.data_documento
-        ? vencimentoFatura(e.data_documento, diaVenc)
+        ? formatarData(vencimentoFatura(e.data_documento, diaVenc))
         : "",
       ["Valor (R$)"]: Math.round(valorBRL(e) * 100) / 100,
       ["Categoria (app)"]: e.categoria ?? "",
