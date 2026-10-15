@@ -11,7 +11,7 @@ const MESES_PT: Record<string, number> = {
 /**
  * Converte a data COMO IMPRESSA no documento para ISO (aaaa-mm-dd), sempre
  * lendo DIA/MÊS/ANO: "08/10/26", "18.06.26", "22-07-2026", "081026",
- * "3 de julho de 2026", "08/10/26 13:06". Devolve "" se não reconhecer.
+ * "3 de julho de 2026", "19 de ago. de 2026" (Uber), "08/10/26 13:06". Devolve "" se não reconhecer.
  * Não depende da IA converter — foi a conversão dela que trocou dia e mês
  * ("08/10/26" virou 10 de agosto).
  */
@@ -27,7 +27,7 @@ export function dataBrasileiraParaIso(texto: string): string {
   let r = t.match(/(?<!\d)(\d{1,2})\s*[/.\-]\s*(\d{1,2})\s*[/.\-]\s*(\d{2,4})(?!\d)/);
   if (r) {
     [d, m, a] = [Number(r[1]), Number(r[2]), Number(r[3])];
-  } else if ((r = t.match(/(\d{1,2})\s+de\s+([a-zç]{3,})\s+de\s+(\d{2,4})/))) {
+  } else if ((r = t.match(/(\d{1,2})\s+(?:de\s+)?([a-zç]{3,})\.?,?\s+(?:de\s+)?(\d{2,4})/))) {
     d = Number(r[1]);
     m = MESES_PT[r[2].slice(0, 3)] ?? 0;
     a = Number(r[3]);
