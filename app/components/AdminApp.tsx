@@ -32,6 +32,7 @@ type ErroApp = {
   mensagem: string;
   detalhe: string | null;
   user_id: string | null;
+  visto_em: string | null; // null = ninguém marcou como visto ainda
 };
 
 function isoHoje() {
@@ -120,11 +121,18 @@ export default function AdminApp({
       if (!podeGerenciar) return;
       // Monitoramento (só admin): quantos erros há registrados e quais usuários
       // estão sem cartão/categoria/centro — sem isso o app deles não lança nota.
-      const [{ data: cats }, { data: ccs }, { count }] = await Promise.all([
+      const [{ data: cats }, { data: ccs }, naoVistos] = await Promise.all([
         supabase.from("categorias").select("user_id"),
         supabase.from("centros_custo").select("user_id"),
-        supabase.from("erros_app").select("id", { count: "exact", head: true }),
+        supabase
+          .from("erros_app")
+          .select("id", { count: "exact", head: true })
+          .is("visto_em", null),
       ]);
+      // Sem a migração 7 (coluna visto_em) a consulta falha: conta todos.
+      const { count } = naoVistos.error
+        ? await supabase.from("erros_app").select("id", { count: "exact", head: true })
+        : naoVistos;
       setErrosTotal(count ?? 0);
       const tem = (lista: unknown, id: string) =>
         ((lista as { user_id: string }[]) ?? []).some((x) => x.user_id === id);
@@ -396,11 +404,18 @@ export default function AdminApp({
     }
     setVerErros(true);
     setErros(null);
-    const { data, error } = await supabase
+    // Não vistos primeiro (mais novos no topo); depois os já vistos, para consulta.
+    let r = await supabase
       .from("erros_app")
       .select("*")
+      .order("visto_em", { ascending: true, nullsFirst: true })
       .order("id", { ascending: false })
-      .limit(50);
+      .limit(80);
+    if (r.error) {
+      // sem a migração 7 ainda: lista do jeito antigo
+      r = await supabase.from("erros_app").select("*").order("id", { ascending: false }).limit(50);
+    }
+    const { data, error } = r;
     if (error) {
       setErrosFalha(true);
       setErros([]);
@@ -410,11 +425,24 @@ export default function AdminApp({
     setErros((data as ErroApp[]) ?? []);
   }
 
-  async function limparErros() {
-    if (!confirm("Apagar todos os erros registrados?")) return;
-    await supabase.from("erros_app").delete().gte("id", 0);
-    setErros([]);
-    setErrosTotal(0);
+  /** Marca como vistos (alguns ou todos). O registro fica guardado para análise. */
+  async function marcarVistos(ids?: number[]) {
+    const agora = new Date().toISOString();
+    let q = supabase.from("erros_app").update({ visto_em: agora }).is("visto_em", null);
+    if (ids) q = q.in("id", ids);
+    const { error } = await q;
+    if (error) {
+      alert(
+        "Não foi possível marcar como visto. A migração 7 (supabase/migration_7.sql) já foi aplicada no Supabase?",
+      );
+      return;
+    }
+    setErros((lista) =>
+      (lista ?? []).map((er) =>
+        !er.visto_em && (!ids || ids.includes(er.id)) ? { ...er, visto_em: agora } : er,
+      ),
+    );
+    setErrosTotal((n) => (ids ? Math.max(0, n - ids.length) : 0));
   }
 
   // usuário que já lançava notas e ficou travado = aviso urgente no botão
@@ -506,11 +534,13 @@ export default function AdminApp({
           <div className="card">
             <div className="row">
               <strong>🩺 Erros registrados pelo app</strong>
-              <span className="count">{erros?.length ?? 0}</span>
+              <span className="count">
+                {erros?.filter((er) => !er.visto_em).length ?? 0} novos
+              </span>
               <span className="spacer" />
-              {erros !== null && erros.length > 0 && (
-                <button className="btn-danger-ghost" onClick={limparErros}>
-                  🗑️ Limpar
+              {erros !== null && erros.some((er) => !er.visto_em) && (
+                <button className="btn-ghost" onClick={() => marcarVistos()}>
+                  ✓ Marcar todos como vistos
                 </button>
               )}
             </div>
@@ -543,12 +573,23 @@ export default function AdminApp({
                 {erros.map((er) => (
                   <div
                     key={er.id}
+                    className={er.visto_em ? "erro-visto" : undefined}
                     style={{ padding: "8px 0", borderTop: "1px solid var(--border)" }}
                   >
                     <div className="note" style={{ margin: 0 }}>
                       {new Date(er.criado_em).toLocaleString("pt-BR")} ·{" "}
                       {er.origem === "extract" ? "servidor/IA" : "celular do usuário"} ·{" "}
                       {er.user_id ? (perfiles[er.user_id] ?? "usuário") : "—"}
+                      {er.visto_em ? (
+                        <> · visto em {new Date(er.visto_em).toLocaleString("pt-BR")}</>
+                      ) : (
+                        <>
+                          {" · "}
+                          <button className="link" onClick={() => marcarVistos([er.id])}>
+                            ✓ marcar como visto
+                          </button>
+                        </>
+                      )}
                     </div>
                     <div style={{ fontSize: 13.5 }}>{er.mensagem}</div>
                     {er.detalhe && (
