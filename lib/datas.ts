@@ -31,6 +31,11 @@ export function dataBrasileiraParaIso(texto: string): string {
     d = Number(r[1]);
     m = MESES_PT[r[2].slice(0, 3)] ?? 0;
     a = Number(r[3]);
+  } else if ((r = t.match(/(?<!\d)(\d{1,2})\s*[/.\-]\s*([a-zç]{3})[a-zç]*\s*[/.\-]\s*(\d{2,4})(?!\d)/))) {
+    // "12/set/26", "15/SET/2026", "06/SET/2026 13:41"
+    d = Number(r[1]);
+    m = MESES_PT[r[2]] ?? 0;
+    a = Number(r[3]);
   } else if ((r = t.match(/^(\d{2})(\d{2})(\d{2}|\d{4})$/))) {
     [d, m, a] = [Number(r[1]), Number(r[2]), Number(r[3])];
   } else {
