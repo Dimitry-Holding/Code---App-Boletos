@@ -2,7 +2,7 @@ import { type Extraccion } from "@/lib/evento";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { registrarErro } from "@/lib/log-erro";
-import { dataBrasileiraParaIso, corrigirTrocaDiaMes } from "@/lib/datas";
+import { dataBrasileiraParaIso, corrigirTrocaDiaMes, avisoDeData } from "@/lib/datas";
 
 /** Registra uma falha da extração no monitoramento (com o usuário, se houver). */
 async function logExtract(mensagem: string, detalhe?: string) {
@@ -344,6 +344,9 @@ function normalizar(
   let data = validarData(dataBruta);
   if (!data && doTexto && daIA !== doTexto) data = validarData(daIA);
   const dataRejeitada = dataBruta !== "" && data === "";
+  // Data apagada ou muito antiga (ex.: manuscrito "03/07" lido como "03/01"):
+  // mantém o que foi lido, mas destaca o campo e baixa a confiança.
+  const avisoData = avisoDeData(data, dataRejeitada);
   return {
     fornecedor: comoTexto(o.fornecedor),
     valor: parseValor(o.valor),
@@ -356,11 +359,11 @@ function normalizar(
       : "debito") as Extraccion["tipo_pagamento"],
     ultimos4: comoTexto(o.ultimos4).replace(/\D/g, "").slice(-4),
     descricao: comoTexto(o.descricao),
-    // Data rejeitada = leitura suspeita: baixamos a confiança para o usuário conferir.
-    confianca: (dataRejeitada
+    confianca: (avisoData
       ? "baixa"
       : CONFIANZAS.includes(comoTexto(o.confianca))
         ? comoTexto(o.confianca)
         : "media") as Extraccion["confianca"],
+    aviso_data: avisoData,
   };
 }

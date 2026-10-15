@@ -57,3 +57,25 @@ export function corrigirTrocaDiaMes(iso: string, agora: number = Date.now()): st
   const dt = dias(trocada);
   return dias(iso) > 20 && dt >= -1 && dt <= 10 ? trocada : iso;
 }
+
+/** Dias inteiros entre a data ISO e `agora` (positivo = passado). */
+export function diasAtras(iso: string, agora: number = Date.now()): number {
+  const t = new Date(`${iso}T12:00:00Z`).getTime();
+  return Math.floor((agora - t) / 86400000);
+}
+
+/**
+ * Aviso para a pessoa conferir a data na revisão. Uma nota costuma ser
+ * lançada poucos dias depois da compra; uma data muito antiga quase sempre é
+ * um dígito lido errado (manuscrito "03/07" lido como "03/01", ano trocado…).
+ */
+export const DIAS_DATA_SUSPEITA = 45;
+export function avisoDeData(iso: string, rejeitada: boolean, agora: number = Date.now()): string {
+  if (rejeitada) return "A data lida não era plausível e foi apagada — informe a data do documento.";
+  if (!iso) return "";
+  const dias = diasAtras(iso, agora);
+  if (dias <= DIAS_DATA_SUSPEITA) return "";
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const br = m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
+  return `Data lida: ${br} (há ${dias} dias). Confira no documento — a leitura pode ter trocado um dígito.`;
+}

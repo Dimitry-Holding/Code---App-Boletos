@@ -728,3 +728,14 @@ body::before {
 .dz-dica-extra {
   opacity: 0.75;
 }
+
+/* Data que a IA leu mas merece conferência (muito antiga ou apagada). */
+.field.alerta input {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+.aviso-data {
+  margin-top: 6px;
+  font-size: 13px;
+  color: #92400e;
+}

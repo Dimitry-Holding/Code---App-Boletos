@@ -9,6 +9,7 @@ export type Extraccion = {
   ultimos4: string;
   descricao: string;
   confianca: "alta" | "media" | "baixa";
+  aviso_data?: string; // pede conferência da data na revisão (não vai ao banco)
 };
 
 /** Una fila de la tabla "eventos". */

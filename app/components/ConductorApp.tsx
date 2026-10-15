@@ -46,6 +46,7 @@ const BORRADOR_VACIO: Borrador = {
   ultimos4: "",
   descricao: "",
   confianca: "media",
+  aviso_data: "",
   centro_custo: "",
 };
 
@@ -1002,13 +1003,19 @@ export default function ConductorApp({
                   onChange={(e) => actualizar("valor", parseFloat(e.target.value) || 0)}
                 />
               </div>
-              <div className="field">
+              <div className={`field${borrador.aviso_data ? " alerta" : ""}`}>
                 <label>Data *</label>
                 <input
                   type="date"
                   value={borrador.data_documento}
-                  onChange={(e) => actualizar("data_documento", e.target.value)}
+                  onChange={(e) =>
+                    // ao corrigir a data, o aviso já cumpriu o papel
+                    setBorrador((b) => ({ ...b, data_documento: e.target.value, aviso_data: "" }))
+                  }
                 />
+                {borrador.aviso_data && (
+                  <div className="aviso-data">⚠️ {borrador.aviso_data}</div>
+                )}
               </div>
             </div>
 
