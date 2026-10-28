@@ -320,7 +320,18 @@ export default function ConductorApp({
           headers: { "Content-Type": "application/json" },
           body: corpo,
         });
-        const data = (await resp.json()) as Extraccion & { error?: string };
+        // Lê como texto e só então interpreta: se a função na Vercel cair ou
+        // estourar o tempo, a resposta vem em texto puro — e no Safari isso
+        // virava um erro críptico ("The string did not match the expected pattern").
+        const texto = await resp.text();
+        let data: Extraccion & { error?: string };
+        try {
+          data = JSON.parse(texto);
+        } catch {
+          throw new TypeError(
+            `Resposta inválida do servidor (HTTP ${resp.status}): ${texto.slice(0, 80)}`,
+          );
+        }
         if (!resp.ok) {
           // o servidor já registrou esta falha no monitoramento (🩺 Erros)
           const e = new Error(data.error || "Erro ao processar.") as Error & {
@@ -1326,8 +1337,12 @@ const MSG_REDE =
  */
 function ehErroDeRede(err: unknown): boolean {
   if (err instanceof TypeError) return true;
+  // DOMException (sem stack) = o próprio navegador falhou ao chamar/ler a rede —
+  // no iPhone aparece como "The string did not match the expected pattern",
+  // AbortError ou NetworkError. Trata como oscilação: tenta de novo.
+  if (typeof DOMException !== "undefined" && err instanceof DOMException) return true;
   const m = mensagemDeErro(err);
-  return /load failed|failed to fetch|network|abort|timed? ?out/i.test(m);
+  return /load failed|failed to fetch|network|abort|timed? ?out|did not match the expected pattern/i.test(m);
 }
 
 /**
